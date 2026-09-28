@@ -1,0 +1,10 @@
+[project]
+name = "kb-pipeline"
+version = "0.1.0"
+description = "Production English factual Knowledge Base pipeline (Common Crawl + public GitHub)."
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.13",
+    "SQLAlchemy>=2.0",
+    "psycopg[binary]>=3.1",
+]
