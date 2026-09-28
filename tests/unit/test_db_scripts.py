@@ -94,6 +94,44 @@ def top_level_statements(text: str) -> list[str]:
     return [s for s in statements if s]
 
 
+def plpgsql_bodies(text: str) -> list[str]:
+    """Bodies of the DO blocks (PL/pgSQL) in a script."""
+    return [m.group(2) for m in re.finditer(r"\bDO\s+(\$\w*\$)(.*?)\1", text, flags=re.S)]
+
+
+def plpgsql_tokens(body: str) -> list[str]:
+    """Upper-cased PL/pgSQL tokens; comments and quoted strings are removed."""
+    body = re.sub(r"--[^\n]*", " ", body)
+    body = re.sub(r"\$(\w*)\$.*?\$\1\$", " ", body, flags=re.S)  # nested dollar-quoted strings
+    body = re.sub(r"'(?:[^']|'')*'", " ", body)
+    return [t.upper() for t in re.findall(r"[A-Za-z_][A-Za-z0-9_$]*|[();]", body)]
+
+
+def unparenthesized_case_in_if(body: str) -> list[str]:
+    """IF/ELSIF conditions containing a CASE outside parentheses.
+
+    PL/pgSQL ends an IF/ELSIF condition at the first THEN outside parentheses,
+    so an unparenthesized CASE ... THEN ... END truncates the condition
+    ("syntax error at end of input").
+    """
+    tokens = plpgsql_tokens(body)
+    problems = []
+    for i, token in enumerate(tokens):
+        if token not in ("IF", "ELSIF") or (i > 0 and tokens[i - 1] == "END"):
+            continue
+        depth, j = 0, i + 1
+        while j < len(tokens) and not (tokens[j] == "THEN" and depth == 0):
+            if tokens[j] == "(":
+                depth += 1
+            elif tokens[j] == ")":
+                depth -= 1
+            elif tokens[j] == "CASE" and depth == 0:
+                problems.append(" ".join(tokens[i:j + 8]))
+                break
+            j += 1
+    return problems
+
+
 def expected_block(text: str, name: str) -> list[str]:
     block = text.split(f"-- BEGIN EXPECTED {name}", 1)[1].split(f"-- END EXPECTED {name}", 1)[0]
     return re.findall(r"^\s*'([^']*)',?$", block, flags=re.M)
@@ -116,6 +154,41 @@ class ScriptInventoryTests(unittest.TestCase):
         for name in READ_ONLY_ENTRY_SCRIPTS + (PROVISIONING, PROBES):
             with self.subTest(script=name):
                 self.assertIn("\\set ON_ERROR_STOP on", read(name))
+
+
+class PlpgsqlConstructionTests(unittest.TestCase):
+    """Regression: provision_kbp_roles.sql failed on PostgreSQL 17.10 with
+    "syntax error at end of input" because an IF condition contained an
+    unparenthesized CASE expression."""
+
+    def test_detector_catches_the_original_defect(self) -> None:
+        broken = ("BEGIN IF r.rolconnlimit <> CASE r.rolname WHEN 'kb_pipeline_migrator' "
+                  "THEN 2 ELSE app_lim::integer END THEN RAISE EXCEPTION 'x'; END IF; END")
+        fixed = broken.replace("<> CASE", "<> (CASE").replace("integer END THEN", "integer END) THEN")
+        self.assertEqual(len(unparenthesized_case_in_if(broken)), 1)
+        self.assertEqual(unparenthesized_case_in_if(fixed), [])
+        # A CASE inside a quoted string or a comment is not code.
+        self.assertEqual(unparenthesized_case_in_if("BEGIN IF x = 'CASE' THEN NULL; END IF; END"), [])
+        self.assertEqual(unparenthesized_case_in_if("BEGIN IF x -- CASE\n THEN NULL; END IF; END"), [])
+
+    def test_no_unparenthesized_case_in_any_if_condition(self) -> None:
+        sources = {name: read(name) for name in ALL_SCRIPTS}
+        sources["migration PREFLIGHT_SQL"] = m001a.MODULE.PREFLIGHT_SQL
+        for name, text in sources.items():
+            bodies = plpgsql_bodies(text)
+            for index, body in enumerate(bodies):
+                with self.subTest(source=name, block=index):
+                    self.assertEqual(unparenthesized_case_in_if(body), [])
+        self.assertGreaterEqual(len(plpgsql_bodies(read(PROVISIONING))), 2)
+
+    def test_every_do_block_is_closed_with_its_own_tag(self) -> None:
+        for name in ALL_SCRIPTS:
+            text = sql_only(read(name))
+            opened = re.findall(r"\bDO\s+(\$\w*\$)", text)
+            with self.subTest(script=name):
+                self.assertEqual(len(plpgsql_bodies(text)), len(opened))
+                for tag in opened:
+                    self.assertEqual(text.count(tag) % 2, 0, tag)
 
 
 class ReadOnlyTests(unittest.TestCase):

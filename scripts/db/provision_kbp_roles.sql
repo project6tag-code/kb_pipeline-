@@ -157,7 +157,9 @@ BEGIN
            OR NOT r.rolcanlogin OR NOT r.rolinherit THEN
             RAISE EXCEPTION 'role % already exists with unexpected attributes; it will not be altered. Stop and review.', r.rolname;
         END IF;
-        IF r.rolconnlimit <> CASE r.rolname WHEN 'kb_pipeline_migrator' THEN 2 ELSE app_lim::integer END THEN
+        -- The CASE is parenthesized: PL/pgSQL ends an IF condition at the first
+        -- THEN outside parentheses, which would otherwise be the CASE's own THEN.
+        IF r.rolconnlimit <> (CASE r.rolname WHEN 'kb_pipeline_migrator' THEN 2 ELSE app_lim::integer END) THEN
             RAISE EXCEPTION 'role % already exists with CONNECTION LIMIT %; expected %. Stop and review.',
                 r.rolname, r.rolconnlimit, CASE r.rolname WHEN 'kb_pipeline_migrator' THEN '2' ELSE app_lim END;
         END IF;

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "kb-pipeline"
 version = "0.1.0"
@@ -8,3 +12,10 @@ dependencies = [
     "SQLAlchemy>=2.0",
     "psycopg[binary]>=3.1",
 ]
+
+[tool.setuptools.packages.find]
+# Only the application package is importable. data, logs, config, docker,
+# migrations, docs, scripts and tests are repository directories, not packages.
+where = ["."]
+include = ["app", "app.*"]
+namespaces = false
