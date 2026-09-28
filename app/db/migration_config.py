@@ -145,10 +145,20 @@ def run_preflight(connection: Any) -> None:
     """Run read-only provisioning checks; raise on the first failure.
 
     Only catalog reads are performed; nothing is created or modified.
+
+    The first ``execute`` autobegins a transaction (SQLAlchemy 2.0). It is
+    always ended here, on success and on failure. If it stayed open, Alembic
+    would treat it as an external transaction owned by the caller, skip its
+    own BEGIN/COMMIT, and the migration would be rolled back when the
+    connection closes.
     """
     from sqlalchemy import text
 
-    for description, sql, message in PREFLIGHT_CHECKS:
-        result = connection.execute(text(sql)).scalar()
-        if result is not True:
-            raise MigrationPreflightError(f"preflight failed ({description}): {message}")
+    try:
+        for description, sql, message in PREFLIGHT_CHECKS:
+            result = connection.execute(text(sql)).scalar()
+            if result is not True:
+                raise MigrationPreflightError(f"preflight failed ({description}): {message}")
+    finally:
+        # Read-only checks: nothing to keep, so end the transaction by rolling back.
+        connection.rollback()

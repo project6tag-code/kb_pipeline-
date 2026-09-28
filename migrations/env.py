@@ -45,6 +45,14 @@ def run_migrations_online() -> None:
     try:
         with engine.connect() as connection:
             mc.run_preflight(connection)
+            # Alembic must own the migration transaction. Given a connection
+            # that is already in a transaction, it would neither BEGIN nor
+            # COMMIT, and closing the connection would roll the migration back.
+            if connection.in_transaction():
+                raise RuntimeError(
+                    "internal error: the migration connection is still in a transaction "
+                    "after preflight; refusing to migrate (Alembic would not commit)"
+                )
             context.configure(connection=connection, **mc.alembic_configure_kwargs())
             with context.begin_transaction():
                 context.run_migrations()

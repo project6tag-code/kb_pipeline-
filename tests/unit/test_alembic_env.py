@@ -73,7 +73,7 @@ class VersionTableTests(unittest.TestCase):
     def test_online_env_runs_preflight_before_configure(self) -> None:
         context = _StubContext(offline=False)
         order: list[str] = []
-        connection = object()
+        connection = SimpleNamespace(in_transaction=lambda: False)
 
         class FakeEngine:
             def connect(self):
@@ -106,8 +106,10 @@ class VersionTableTests(unittest.TestCase):
     def test_public_alembic_version_never_configured(self) -> None:
         for offline in (True, False):
             context = _StubContext(offline=offline)
+            engine = mock.MagicMock()
+            engine.connect.return_value.__enter__.return_value.in_transaction.return_value = False
             with mock.patch.object(mc, "get_migration_url", return_value="u"), \
-                    mock.patch.object(mc, "create_migration_engine", return_value=mock.MagicMock()), \
+                    mock.patch.object(mc, "create_migration_engine", return_value=engine), \
                     mock.patch.object(mc, "run_preflight"):
                 run_env(context)
             for call in context.configure_calls:
@@ -163,10 +165,14 @@ class PreflightTests(unittest.TestCase):
         def __init__(self, results):
             self.results = list(results)
             self.executed: list[str] = []
+            self.rollbacks = 0
 
         def execute(self, clause):
             self.executed.append(str(clause))
             return SimpleNamespace(scalar=lambda: self.results.pop(0))
+
+        def rollback(self):
+            self.rollbacks += 1
 
     def test_all_checks_are_read_only_selects(self) -> None:
         for description, sql, _message in mc.PREFLIGHT_CHECKS:
@@ -191,6 +197,111 @@ class PreflightTests(unittest.TestCase):
         connection = self.FakeConnection([True, None])
         with self.assertRaises(mc.MigrationPreflightError):
             mc.run_preflight(connection)
+
+    def test_preflight_always_ends_its_transaction(self) -> None:
+        # Regression: an open preflight transaction made Alembic skip COMMIT.
+        passing = self.FakeConnection([True] * len(mc.PREFLIGHT_CHECKS))
+        mc.run_preflight(passing)
+        self.assertEqual(passing.rollbacks, 1)
+        failing = self.FakeConnection([False])
+        with self.assertRaises(mc.MigrationPreflightError):
+            mc.run_preflight(failing)
+        self.assertEqual(failing.rollbacks, 1)
+
+
+class OnlineTransactionGuardTests(unittest.TestCase):
+    def test_env_refuses_a_connection_left_in_a_transaction(self) -> None:
+        context = _StubContext(offline=False)
+        connection = SimpleNamespace(in_transaction=lambda: True)
+        engine = SimpleNamespace(connect=lambda: contextlib.nullcontext(connection), dispose=lambda: None)
+        with mock.patch.object(mc, "get_migration_url", return_value="u"), \
+                mock.patch.object(mc, "create_migration_engine", return_value=engine), \
+                mock.patch.object(mc, "run_preflight"):
+            with self.assertRaises(RuntimeError):
+                run_env(context)
+        self.assertEqual(context.configure_calls, [])
+
+
+def _alembic_available() -> bool:
+    try:
+        import alembic.runtime.migration  # noqa: F401
+        import sqlalchemy  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+@unittest.skipUnless(_alembic_available(), "alembic and SQLAlchemy are required")
+class RealAlembicCommitRegressionTests(unittest.TestCase):
+    """Real SQLAlchemy 2.0 + Alembic, on a temporary SQLite file (no PostgreSQL).
+
+    Reproduces the Phase 1A live failure: `alembic upgrade` printed "Running
+    upgrade -> kbp_001a" but nothing persisted, because the preflight query
+    autobegan a transaction before context.configure(); Alembic then treated
+    it as external, never committed, and closing the connection rolled back.
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+
+        from sqlalchemy import create_engine, pool, text
+
+        self.text = text
+        self.directory = tempfile.TemporaryDirectory()
+        self.engine = create_engine(f"sqlite:///{self.directory.name}/t.db", poolclass=pool.NullPool)
+        with self.engine.begin() as connection:
+            connection.execute(text("CREATE TABLE migrated (x integer)"))
+
+    def tearDown(self) -> None:
+        self.engine.dispose()
+        self.directory.cleanup()
+
+    def _migrate(self, before_configure) -> tuple[bool, int]:
+        """Run the env.py online sequence; return (external?, rows persisted)."""
+        from alembic.runtime.migration import MigrationContext
+
+        with self.engine.connect() as connection:
+            before_configure(connection)
+            context = MigrationContext.configure(
+                connection, opts={"transaction_per_migration": True}
+            )
+            external = context._in_external_transaction
+            with context.begin_transaction():
+                with context.begin_transaction(_per_migration=True):
+                    connection.execute(self.text("INSERT INTO migrated VALUES (1)"))
+        with self.engine.connect() as fresh:
+            rows = fresh.execute(self.text("SELECT count(*) FROM migrated")).scalar()
+        return external, rows
+
+    def _preflight_patch(self):
+        from sqlalchemy import Boolean, column
+        from sqlalchemy import text as real_text
+
+        typed = lambda _sql: real_text("SELECT 1 AS ok").columns(column("ok", Boolean))  # noqa: E731
+        return mock.patch("sqlalchemy.text", typed)
+
+    def test_old_sequence_loses_the_migration(self) -> None:
+        # The pre-fix behaviour: a query leaves an autobegun transaction open.
+        external, rows = self._migrate(lambda c: c.execute(self.text("SELECT 1")))
+        self.assertTrue(external)
+        self.assertEqual(rows, 0)
+
+    def test_run_preflight_leaves_alembic_in_charge_and_the_migration_persists(self) -> None:
+        def preflight(connection):
+            with self._preflight_patch():
+                mc.run_preflight(connection)
+            self.assertFalse(connection.in_transaction())
+
+        external, rows = self._migrate(preflight)
+        self.assertFalse(external)
+        self.assertEqual(rows, 1)
+
+    def test_failed_preflight_also_ends_the_transaction(self) -> None:
+        with self.engine.connect() as connection:
+            with mock.patch.object(mc, "PREFLIGHT_CHECKS", (("fails", "SELECT 0", "expected failure"),)):
+                with self.assertRaises(mc.MigrationPreflightError):
+                    mc.run_preflight(connection)
+            self.assertFalse(connection.in_transaction())
 
 
 class AlembicIniTests(unittest.TestCase):
