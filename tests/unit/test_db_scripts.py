@@ -361,9 +361,100 @@ class LegacyMetricConsistencyTests(unittest.TestCase):
                 self.assertIn(f"'kbp_verify.b_{metric}',", checks)
                 self.assertIn(f":'fp_{metric}'", checks)
 
+    def test_pre_provisioning_acl_rule_is_strict(self) -> None:
+        """Regression (live run 1A): the baseline came from the pre-provisioning
+        snapshot, so acl_digest legitimately differed. The ACL may then pass only
+        via the all-default + exactly-approved-grants rule, never otherwise."""
+        checks = read("lib/legacy_checks.sql")
+        body = plpgsql_bodies(checks)[0]
+        exact = body.index("ELSIF baseline = observed THEN")
+        delta_pass = body.index("ELSIF metric = 'acl_digest' AND baseline = all_default AND acl_delta IS NULL THEN")
+        delta_fail = body.index("ELSIF metric = 'acl_digest' AND baseline = all_default THEN")
+        generic_fail = body.index("RAISE WARNING 'FAIL L-%: CHANGED")
+        self.assertLess(exact, delta_pass)
+        self.assertLess(delta_pass, delta_fail)
+        self.assertLess(delta_fail, generic_fail)
+        self.assertIn("failures := failures + 1;", body[delta_fail:generic_fail])
+        # No other metric has a special case.
+        self.assertEqual(body.count("ELSIF metric ="), 2)
+
+    def test_all_default_digest_reproduces_the_fingerprint_formula(self) -> None:
+        import hashlib
+
+        fingerprint = read("lib/legacy_fingerprint.sql")
+        self.assertIn("SELECT c.oid, 'public.' || c.relname AS rel, c.relacl", fingerprint)
+        self.assertIn("r.rel || ' acl ' || coalesce(array_to_string(r.relacl, ','), '<default>')", fingerprint)
+        checks = read("lib/legacy_checks.sql")
+        self.assertIn("SELECT 'public.' || c.relname || ' acl <default>' AS item", checks)
+        self.assertIn("SELECT md5(string_agg(item, E'\\n' ORDER BY item))", checks)
+        # relname has collation "C", i.e. byte order. This is the acl_digest the
+        # live pre-provisioning snapshot recorded (all five relations <default>).
+        items = sorted(f"public.{t} acl <default>" for t in
+                       ("kb", "metadata", "datasets", "dataset_sources", "alembic_version"))
+        self.assertEqual(hashlib.md5("\n".join(items).encode()).hexdigest(), "9eb1292570bf6d3d3a6cf05a1b061a84")
+
+    def test_approved_acl_equals_the_provisioning_grants(self) -> None:
+        provisioning = top_level_statements(sql_only(read(PROVISIONING)))
+        columns = {
+            "datasets": None, "dataset_sources": None, "metadata": None, "kb": None,
+        }
+        derived = set()
+        for statement in provisioning:
+            match = re.match(r"GRANT (.+) ON TABLE (public\.\w+) TO (\w+)$", " ".join(statement.split()))
+            if not match:
+                continue
+            privileges, relation, role = match.groups()
+            self.assertIn(relation.split(".")[1], columns)
+            for privilege, cols in re.findall(r"(\w+)(?: \(([^)]*)\))?(?:, |$)", privileges):
+                if cols:
+                    derived |= {f"{relation}|{c.strip()}|{role}|{privilege}|false" for c in cols.split(",")}
+                else:
+                    derived.add(f"{relation}||{role}|{privilege}|false")
+        block = read("lib/legacy_checks.sql").split("-- BEGIN APPROVED PROVISIONING ACL", 1)[1]
+        approved = set(re.findall(r"\('([^']+)'\)", block.split("-- END APPROVED PROVISIONING ACL", 1)[0]))
+        self.assertEqual(approved, derived)
+        self.assertEqual(len(approved), 15)
+        self.assertFalse(any("|INSERT|" in k and k.startswith(("public.datasets|", "public.dataset_sources|"))
+                             for k in approved))
+
     def test_missing_baseline_is_a_failure(self) -> None:
         checks = read("lib/legacy_checks.sql")
         self.assertRegex(checks, r"IF baseline = '' THEN\s+failures := failures \+ 1;")
+
+
+class ProvisioningOwnershipCheckTests(unittest.TestCase):
+    """Regression (live run 1A): P10 failed on the PostgreSQL-generated TOAST
+    tables/indexes (schema pg_toast) of the migrator's kbp tables."""
+
+    P10 = re.search(r"\('P10',.*?\$q\$(.*?)\$q\$\)", read("verify_kbp_provisioning.sql"), flags=re.S).group(1)
+
+    def test_toast_exemption_is_proven_by_catalog_links(self) -> None:
+        flat = " ".join(self.P10.split())
+        # Parent: a kbp table owned by the migrator that points at the TOAST table.
+        self.assertIn("SELECT p.reltoastrelid AS toast_oid FROM pg_catalog.pg_class AS p, m "
+                      "WHERE p.relnamespace = (SELECT oid FROM k) AND p.relkind = 'r' "
+                      "AND p.relowner = m.oid AND p.reltoastrelid <> 0", flat)
+        # The TOAST table itself, and the index whose indrelid is that TOAST table.
+        self.assertIn("JOIN kbp_toast_parents AS kp ON kp.toast_oid = t.oid "
+                      "WHERE t.relkind = 't' AND t.relnamespace = 'pg_toast'::regnamespace", flat)
+        self.assertIn("JOIN kbp_toast_parents AS kp ON kp.toast_oid = x.indrelid "
+                      "WHERE i.relkind = 'i' AND i.relnamespace = 'pg_toast'::regnamespace", flat)
+        self.assertIn("AND c.oid NOT IN (SELECT oid FROM kbp_toast)", flat)
+
+    def test_no_blanket_pg_toast_exemption(self) -> None:
+        flat = " ".join(self.P10.split())
+        self.assertNotRegex(flat, r"(?i)nspname\s*(<>|!=|=|not like|like)\s*'pg_toast")
+        self.assertNotRegex(flat, r"(?i)relname\s*(not like|like|~)")
+        self.assertEqual(flat.count("pg_toast'::regnamespace"), 2)
+
+    def test_only_the_relation_branch_is_exempted(self) -> None:
+        owned = " ".join(self.P10.split("owned AS (", 1)[1].split())
+        branches = owned.split("UNION ALL")
+        self.assertEqual(len(branches), 5)
+        for branch in branches:
+            with self.subTest(branch=branch[:40]):
+                self.assertEqual("kbp_toast" in branch, branch.lstrip().startswith("SELECT 'relation '"))
+        self.assertIn("SELECT 'database ' || d.datname", owned)
 
 
 class PermissionProbeTests(unittest.TestCase):

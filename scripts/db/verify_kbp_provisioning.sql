@@ -141,15 +141,34 @@ BEGIN
               AND refclassid = 'pg_catalog.pg_authid'::regclass
               AND refobjid = 'kb_pipeline_app'::regrole::oid$q$),
 
-        ('P10', 'kb_pipeline_migrator owns nothing in this database outside schema kbp',
+        ('P10', 'kb_pipeline_migrator owns nothing in this database outside schema kbp (except the proven TOAST relations of its kbp tables)',
          $q$WITH m AS (SELECT 'kb_pipeline_migrator'::regrole::oid AS oid),
                  k AS (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = 'kbp'),
+                 -- PostgreSQL places the TOAST table of a table, and that TOAST
+                 -- table's index, in schema pg_toast, owned by the table's owner.
+                 -- Allowed only when proven through the catalog links:
+                 -- parent.reltoastrelid = TOAST table, pg_index.indrelid = TOAST
+                 -- table, where the parent is a kbp table owned by the migrator.
+                 kbp_toast_parents AS (
+                     SELECT p.reltoastrelid AS toast_oid FROM pg_catalog.pg_class AS p, m
+                     WHERE p.relnamespace = (SELECT oid FROM k) AND p.relkind = 'r'
+                       AND p.relowner = m.oid AND p.reltoastrelid <> 0),
+                 kbp_toast AS (
+                     SELECT t.oid FROM pg_catalog.pg_class AS t
+                     JOIN kbp_toast_parents AS kp ON kp.toast_oid = t.oid
+                     WHERE t.relkind = 't' AND t.relnamespace = 'pg_toast'::regnamespace
+                     UNION ALL
+                     SELECT x.indexrelid FROM pg_catalog.pg_index AS x
+                     JOIN pg_catalog.pg_class AS i ON i.oid = x.indexrelid
+                     JOIN kbp_toast_parents AS kp ON kp.toast_oid = x.indrelid
+                     WHERE i.relkind = 'i' AND i.relnamespace = 'pg_toast'::regnamespace),
                  owned AS (
                      SELECT 'schema ' || n.nspname AS obj FROM pg_catalog.pg_namespace AS n, m
                      WHERE n.nspowner = m.oid AND n.nspname <> 'kbp'
                      UNION ALL
                      SELECT 'relation ' || c.oid::regclass::text FROM pg_catalog.pg_class AS c, m
                      WHERE c.relowner = m.oid AND c.relnamespace IS DISTINCT FROM (SELECT oid FROM k)
+                       AND c.oid NOT IN (SELECT oid FROM kbp_toast)
                      UNION ALL
                      SELECT 'function ' || p.oid::regprocedure::text FROM pg_catalog.pg_proc AS p, m
                      WHERE p.proowner = m.oid AND p.pronamespace IS DISTINCT FROM (SELECT oid FROM k)

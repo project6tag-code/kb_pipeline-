@@ -265,7 +265,9 @@ psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d data_collection_pipeline 
   Select-String -Path E:\kbp_evidence\04_snapshot_post_provisioning.txt -Pattern '^\\set baseline_' | ForEach-Object { $_.Line } | Set-Content -Encoding ascii E:\kbp_evidence\baseline_001a.psql
   ```
 
-  It must contain 12 lines.
+  It must contain 12 lines. **Use the post-provisioning snapshot, not
+  `02_snapshot_pre.txt`**: see "Baseline taken before provisioning" after
+  step 16 for what happens otherwise.
 
 **STEP 5 — Configure `KB_MIGRATION_DATABASE_URL` securely.**
 
@@ -416,6 +418,47 @@ The live test passes only if every step passed. The state left behind is
 Migration 001A applied, `kbp.source_dataset_map` empty, and the legacy objects
 unchanged.
 
+### 6.1 Baseline taken before provisioning
+
+The designed baseline is the **post-provisioning** snapshot (step 4). With
+it, all 12 legacy metrics, `acl_digest` included, must match exactly.
+
+If the baseline was extracted from the **pre-provisioning** snapshot (step 2),
+`acl_digest` cannot match: provisioning adds the approved grants to
+`public.datasets`, `public.dataset_sources`, `public.metadata` and `public.kb`,
+and materializes their owner-default ACLs. After Migration 001A has run, a
+genuine post-provisioning, pre-migration snapshot can no longer be produced.
+**Do not edit the baseline file or the historical snapshot.** Instead,
+`lib/legacy_checks.sql` applies one strict, automatic rule, and only in this
+case:
+
+- the baseline `acl_digest` must be the all-default state, recomputed by the
+  verifier: every protected relation `<default>` and no column ACLs. A
+  pre-provisioning snapshot shows exactly this in its "legacy privilege
+  listing";
+- every current ACL entry of any role other than the two pipeline roles must be
+  exactly the owner's built-in default (`acldefault`);
+- the pipeline roles' current table and column ACL entries must be **exactly**
+  the 15 approved provisioning grants, with no grant option (privileges §3.2
+  and §6; no `INSERT` on `public.datasets`). The list is test-bound to
+  `provision_kbp_roles.sql`.
+
+It then reports `PASS L-acl_digest: the baseline predates provisioning …`. Any
+other difference is still a FAIL with the offending entries listed. All other
+11 metrics are compared exactly as before; they are unaffected by provisioning.
+
+Procedure when this happens:
+
+1. Keep the pre-provisioning baseline unchanged (it proves the data,
+   structure, inventory and `public.alembic_version` across provisioning
+   **and** migration).
+2. Re-run `verify_migration_001a.sql` with that baseline (step 9 command) and
+   require `VERIFICATION PASSED`.
+3. Run `verify_kbp_provisioning.sql -v expect_empty_kbp=false` (step 16.2).
+   Its P15–P19 independently prove the pipeline roles' effective privileges on
+   every `public` relation.
+4. Keep using the same baseline file for steps 12, 14 and 15.
+
 ## 7. Deferred: Gold bridge bootstrap (BLOCKED)
 
 The bootstrap of the two `public.datasets` bridge rows (schema §14.3,
@@ -443,3 +486,4 @@ Everything else in `kbp` is usable.
 | F4 | The provisioning guard aborts (and changes nothing) if `PUBLIC` has `CREATE` on the database or on schema `public`, or any privilege on the four protected tables, because every role would inherit it. Neither fact is in the audits. | Revoking such a `PUBLIC` privilege is a separate administrator decision; the script never does it. |
 | F5 | `PUBLIC`'s default `TEMPORARY` privilege on the database is inherited by both roles. | Reported (not changed): revoking it would affect every role of the legacy system. |
 | F6 | `pg_hba.conf` and the schema of the `vector` type are not in the audits. | Reported by `verify_kbp_provisioning.sql` for review at step 4. |
+| F7 | After Migration 001A, PostgreSQL creates a TOAST table (`pg_toast.pg_toast_<oid>`) and its index for every `kbp` table with TOAST-able columns (`text`, `bytea`, `jsonb`). They live in schema `pg_toast` and are owned by the table owner, `kb_pipeline_migrator`. | P10 allows a migrator-owned relation outside `kbp` only if it is proven to be such an object through the catalog links: a `kbp` table (`relkind 'r'`) owned by the migrator has `reltoastrelid` = the TOAST table (`relkind 't'`, schema `pg_toast`), or `pg_index.indrelid` of the index (`relkind 'i'`, schema `pg_toast`) is that TOAST table. There is no name- or schema-based exemption. Any other migrator-owned object outside `kbp`, including an unlinked `pg_toast` relation, still fails. |

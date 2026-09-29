@@ -1,0 +1,185 @@
+{
+  "taxonomy": "kb-subject-taxonomy",
+  "version": "tax1",
+  "notes": "Subject domains for kbp.document_registry.subject_domain (label 'Domain/Subdomain', <= 100 chars). Extend by adding domains/subdomains/keywords; the classifier version changes with the file digest.",
+  "domains": [
+    {"name": "Physics", "keywords": ["physics", "physical", "physicist", "energy", "force", "mass", "velocity", "momentum"],
+     "subdomains": [
+       {"name": "Quantum Mechanics", "keywords": ["quantum", "wave function", "wavefunction", "schrodinger", "schrödinger", "superposition", "entanglement", "qubit", "uncertainty principle", "planck", "eigenstate", "hamiltonian", "spin", "photon"]},
+       {"name": "Classical Mechanics", "keywords": ["newton", "newtonian", "acceleration", "inertia", "friction", "kinematics", "torque", "angular momentum", "projectile", "gravity", "gravitational", "oscillation", "pendulum"]},
+       {"name": "Thermodynamics", "keywords": ["thermodynamics", "entropy", "heat", "temperature", "enthalpy", "heat engine", "carnot", "thermal equilibrium", "specific heat", "adiabatic", "isothermal"]},
+       {"name": "Electromagnetism", "keywords": ["electromagnetic", "electric field", "magnetic field", "maxwell", "voltage", "current", "charge", "capacitor", "inductance", "coulomb", "electromagnetism"]},
+       {"name": "Relativity", "keywords": ["relativity", "spacetime", "einstein", "lorentz", "time dilation", "general relativity", "special relativity", "speed of light"]},
+       {"name": "Particle and Nuclear Physics", "keywords": ["particle", "quark", "lepton", "boson", "hadron", "neutrino", "nuclear", "nucleus", "fission", "fusion", "radioactive", "collider", "standard model"]},
+       {"name": "Optics", "keywords": ["optics", "optical", "lens", "refraction", "reflection", "diffraction", "interference", "wavelength", "laser", "polarization"]}
+     ]},
+    {"name": "Chemistry", "keywords": ["chemistry", "chemical", "chemist", "compound", "molecule", "reaction", "element"],
+     "subdomains": [
+       {"name": "Organic Chemistry", "keywords": ["organic", "carbon", "hydrocarbon", "alkane", "alkene", "benzene", "functional group", "ester", "polymer", "synthesis"]},
+       {"name": "Inorganic Chemistry", "keywords": ["inorganic", "metal", "salt", "oxide", "coordination", "ligand", "transition metal", "periodic table", "ion"]},
+       {"name": "Physical Chemistry", "keywords": ["kinetics", "reaction rate", "equilibrium", "catalyst", "activation energy", "electrochemistry", "thermochemistry", "spectroscopy"]},
+       {"name": "Biochemistry", "keywords": ["biochemistry", "enzyme", "protein", "amino acid", "metabolism", "atp", "substrate", "lipid", "carbohydrate"]},
+       {"name": "Analytical Chemistry", "keywords": ["chromatography", "titration", "mass spectrometry", "assay", "concentration", "calibration", "analyte"]}
+     ]},
+    {"name": "Biology", "keywords": ["biology", "biological", "organism", "species", "cell", "life"],
+     "subdomains": [
+       {"name": "Molecular Biology", "keywords": ["dna", "rna", "gene", "genome", "transcription", "translation", "replication", "mrna", "protein synthesis", "chromosome", "crispr", "sequencing"]},
+       {"name": "Genetics", "keywords": ["genetics", "heredity", "allele", "mutation", "inheritance", "genotype", "phenotype", "mendel", "dominant", "recessive"]},
+       {"name": "Cell Biology", "keywords": ["cell membrane", "mitochondria", "organelle", "nucleus", "cytoplasm", "mitosis", "meiosis", "ribosome", "chloroplast", "cell division"]},
+       {"name": "Ecology", "keywords": ["ecology", "ecosystem", "habitat", "biodiversity", "population", "food chain", "predator", "prey", "niche", "biome"]},
+       {"name": "Evolution", "keywords": ["evolution", "natural selection", "darwin", "adaptation", "speciation", "common ancestor", "fossil", "phylogenetic"]},
+       {"name": "Botany", "keywords": ["plant", "plants", "photosynthesis", "leaf", "leaves", "root", "flower", "seed", "chlorophyll", "botany"]},
+       {"name": "Zoology", "keywords": ["animal", "animals", "mammal", "bird", "reptile", "insect", "vertebrate", "invertebrate", "zoology"]},
+       {"name": "Microbiology", "keywords": ["bacteria", "bacterium", "virus", "microbe", "microorganism", "fungi", "pathogen", "microbiology"]}
+     ]},
+    {"name": "Medicine and Health", "keywords": ["medical", "medicine", "health", "patient", "clinical", "disease", "treatment", "symptom"],
+     "subdomains": [
+       {"name": "Anatomy and Physiology", "keywords": ["anatomy", "physiology", "organ", "heart", "lung", "kidney", "liver", "blood", "muscle", "nervous system", "skeleton"]},
+       {"name": "Pharmacology", "keywords": ["drug", "dose", "dosage", "pharmacology", "medication", "side effect", "prescription", "pharmacokinetics", "antibiotic"]},
+       {"name": "Infectious Disease", "keywords": ["infection", "infectious", "vaccine", "vaccination", "epidemic", "pandemic", "transmission", "immunity", "outbreak"]},
+       {"name": "Public Health", "keywords": ["public health", "epidemiology", "prevalence", "incidence", "mortality", "risk factor", "screening", "population health"]},
+       {"name": "Nutrition", "keywords": ["nutrition", "diet", "vitamin", "calorie", "calories", "nutrient", "protein intake", "mineral"]},
+       {"name": "Mental Health", "keywords": ["mental health", "depression", "anxiety", "psychiatric", "therapy", "disorder", "schizophrenia", "bipolar"]}
+     ]},
+    {"name": "Earth Sciences", "keywords": ["earth", "geology", "geological", "geoscience"],
+     "subdomains": [
+       {"name": "Geology", "keywords": ["rock", "rocks", "mineral", "sediment", "tectonic", "plate tectonics", "volcano", "earthquake", "magma", "crust", "erosion"]},
+       {"name": "Meteorology and Climate", "keywords": ["weather", "climate", "atmosphere", "atmospheric", "precipitation", "cyclone", "hurricane", "climate change", "greenhouse", "temperature anomaly"]},
+       {"name": "Oceanography", "keywords": ["ocean", "oceanic", "sea", "tide", "tides", "marine", "current", "salinity", "coral"]},
+       {"name": "Hydrology", "keywords": ["river", "groundwater", "aquifer", "watershed", "flood", "drainage", "hydrology"]}
+     ]},
+    {"name": "Astronomy", "keywords": ["astronomy", "astronomical", "astronomer", "space"],
+     "subdomains": [
+       {"name": "Planetary Science", "keywords": ["planet", "planets", "mars", "jupiter", "venus", "saturn", "moon", "asteroid", "comet", "solar system", "orbit"]},
+       {"name": "Stellar Astrophysics", "keywords": ["star", "stars", "stellar", "supernova", "neutron star", "white dwarf", "main sequence", "nebula", "sun"]},
+       {"name": "Cosmology", "keywords": ["cosmology", "big bang", "universe", "dark matter", "dark energy", "cosmic microwave", "galaxy", "galaxies", "redshift", "expansion"]},
+       {"name": "Space Exploration", "keywords": ["spacecraft", "rocket", "nasa", "esa", "satellite", "launch", "astronaut", "mission", "space station", "rover"]}
+     ]},
+    {"name": "Mathematics", "keywords": ["mathematics", "mathematical", "theorem", "proof", "equation"],
+     "subdomains": [
+       {"name": "Algebra", "keywords": ["algebra", "polynomial", "group", "ring", "field", "vector space", "matrix", "linear algebra", "eigenvalue", "homomorphism"]},
+       {"name": "Calculus and Analysis", "keywords": ["calculus", "derivative", "integral", "limit", "continuous", "differential", "series", "convergence", "function", "differential equation"]},
+       {"name": "Geometry and Topology", "keywords": ["geometry", "topology", "triangle", "angle", "manifold", "euclidean", "circle", "polygon", "curvature"]},
+       {"name": "Number Theory", "keywords": ["prime", "primes", "integer", "divisibility", "modular arithmetic", "number theory", "congruence", "diophantine"]},
+       {"name": "Probability and Statistics", "keywords": ["probability", "statistics", "statistical", "random variable", "distribution", "variance", "mean", "regression", "hypothesis test", "bayesian", "standard deviation"]},
+       {"name": "Discrete Mathematics", "keywords": ["graph theory", "combinatorics", "set theory", "logic", "permutation", "combination", "boolean"]}
+     ]},
+    {"name": "Computer Science", "keywords": ["computer science", "computation", "computational", "algorithm", "algorithms"],
+     "subdomains": [
+       {"name": "Algorithms and Data Structures", "keywords": ["sorting", "binary search", "hash table", "linked list", "tree", "graph", "complexity", "big o", "dynamic programming", "recursion", "heap", "queue", "stack"]},
+       {"name": "Artificial Intelligence", "keywords": ["machine learning", "neural network", "deep learning", "artificial intelligence", "training", "model", "classification", "reinforcement learning", "transformer", "gradient descent", "dataset"]},
+       {"name": "Theory of Computation", "keywords": ["turing machine", "automata", "computability", "decidable", "np-complete", "formal language", "grammar", "lambda calculus"]},
+       {"name": "Computer Networks", "keywords": ["network", "tcp", "udp", "ip address", "http", "router", "protocol", "packet", "dns", "bandwidth", "latency", "socket"]},
+       {"name": "Computer Security", "keywords": ["security", "encryption", "cryptography", "vulnerability", "authentication", "malware", "attack", "cipher", "tls", "firewall"]},
+       {"name": "Computer Architecture", "keywords": ["cpu", "processor", "memory", "cache", "instruction set", "register", "pipeline", "gpu", "assembly"]}
+     ]},
+    {"name": "Software Engineering", "keywords": ["software", "code", "developer", "programming", "library", "application"],
+     "subdomains": [
+       {"name": "Databases", "keywords": ["database", "sql", "query", "table", "index", "transaction", "postgresql", "mysql", "schema", "primary key", "join", "nosql"]},
+       {"name": "Web Development", "keywords": ["html", "css", "javascript", "browser", "frontend", "backend", "react", "http request", "rest api", "web server", "dom"]},
+       {"name": "Programming Languages", "keywords": ["python", "java", "rust", "golang", "compiler", "interpreter", "syntax", "type system", "variable", "function", "class", "object"]},
+       {"name": "DevOps and Infrastructure", "keywords": ["docker", "kubernetes", "container", "deployment", "ci", "pipeline", "cloud", "server", "terraform", "infrastructure", "linux"]},
+       {"name": "Software Testing", "keywords": ["test", "tests", "unit test", "testing", "assert", "mock", "integration test", "coverage", "test case"]},
+       {"name": "Version Control", "keywords": ["git", "commit", "branch", "merge", "repository", "pull request", "version control"]},
+       {"name": "Operating Systems", "keywords": ["kernel", "process", "thread", "scheduler", "file system", "system call", "operating system", "memory management"]}
+     ]},
+    {"name": "Engineering", "keywords": ["engineering", "engineer", "design", "system"],
+     "subdomains": [
+       {"name": "Electrical Engineering", "keywords": ["circuit", "resistor", "transistor", "voltage", "power supply", "signal", "amplifier", "semiconductor", "microcontroller"]},
+       {"name": "Mechanical Engineering", "keywords": ["engine", "gear", "turbine", "machine", "stress", "strain", "load", "bearing", "hydraulic"]},
+       {"name": "Civil Engineering", "keywords": ["bridge", "concrete", "construction", "structural", "building", "road", "foundation", "steel"]},
+       {"name": "Aerospace Engineering", "keywords": ["aircraft", "aerodynamics", "wing", "lift", "drag", "propulsion", "jet engine", "airplane"]}
+     ]},
+    {"name": "Economics", "keywords": ["economics", "economic", "economy", "economist", "market"],
+     "subdomains": [
+       {"name": "Macroeconomics", "keywords": ["inflation", "gdp", "unemployment", "monetary policy", "fiscal policy", "central bank", "interest rate", "recession", "economic growth"]},
+       {"name": "Microeconomics", "keywords": ["supply", "demand", "price elasticity", "consumer", "utility", "marginal cost", "equilibrium price", "competition", "monopoly"]},
+       {"name": "International Trade", "keywords": ["trade", "tariff", "export", "import", "exchange rate", "balance of payments", "trade deficit"]}
+     ]},
+    {"name": "Finance", "keywords": ["finance", "financial", "money", "investment", "capital"],
+     "subdomains": [
+       {"name": "Accounting", "keywords": ["accounting", "balance sheet", "income statement", "ledger", "asset", "liability", "depreciation", "audit", "revenue", "expense", "equity"]},
+       {"name": "Investing and Markets", "keywords": ["stock", "stocks", "bond", "bonds", "portfolio", "dividend", "shares", "stock market", "index fund", "securities", "valuation"]},
+       {"name": "Banking", "keywords": ["bank", "banking", "loan", "mortgage", "deposit", "credit", "interest", "lending"]},
+       {"name": "Personal Finance", "keywords": ["budget", "savings", "retirement", "pension", "tax", "taxes", "insurance", "debt"]}
+     ]},
+    {"name": "Business and Management", "keywords": ["business", "company", "management", "organization"],
+     "subdomains": [
+       {"name": "Marketing", "keywords": ["marketing", "brand", "advertising campaign", "customer segment", "market research", "branding"]},
+       {"name": "Management", "keywords": ["manager", "leadership", "strategy", "project management", "operations", "stakeholder", "workflow"]},
+       {"name": "Entrepreneurship", "keywords": ["startup", "entrepreneur", "founder", "venture capital", "business plan"]}
+     ]},
+    {"name": "Law", "keywords": ["law", "legal", "court", "statute", "regulation"],
+     "subdomains": [
+       {"name": "Constitutional Law", "keywords": ["constitution", "constitutional", "amendment", "supreme court", "rights", "judicial review"]},
+       {"name": "Criminal Law", "keywords": ["criminal", "crime", "prosecution", "defendant", "sentence", "felony", "offense"]},
+       {"name": "Contract and Commercial Law", "keywords": ["contract", "agreement", "liability", "breach", "tort", "plaintiff", "damages"]},
+       {"name": "Intellectual Property", "keywords": ["copyright", "patent", "trademark", "license", "licensing", "intellectual property"]}
+     ]},
+    {"name": "Politics and Government", "keywords": ["government", "political", "politics", "policy", "state"],
+     "subdomains": [
+       {"name": "Elections", "keywords": ["election", "vote", "voting", "ballot", "candidate", "campaign", "electoral"]},
+       {"name": "Public Administration", "keywords": ["ministry", "department", "agency", "public service", "administration", "bureaucracy"]},
+       {"name": "International Relations", "keywords": ["diplomacy", "treaty", "united nations", "foreign policy", "sanctions", "alliance", "nato"]}
+     ]},
+    {"name": "History", "keywords": ["history", "historical", "historian", "century", "era"],
+     "subdomains": [
+       {"name": "Ancient History", "keywords": ["ancient", "roman", "rome", "greek", "egypt", "egyptian", "pharaoh", "empire", "antiquity", "mesopotamia"]},
+       {"name": "Medieval History", "keywords": ["medieval", "middle ages", "feudal", "crusade", "byzantine", "knight"]},
+       {"name": "Modern History", "keywords": ["world war", "revolution", "colonial", "industrial revolution", "cold war", "independence", "20th century", "19th century"]}
+     ]},
+    {"name": "Geography", "keywords": ["geography", "geographic", "region", "country", "capital", "population"],
+     "subdomains": [
+       {"name": "Physical Geography", "keywords": ["mountain", "mountains", "desert", "continent", "island", "lake", "plateau", "valley", "climate zone"]},
+       {"name": "Human Geography", "keywords": ["city", "cities", "urban", "rural", "migration", "demographics", "settlement", "census"]}
+     ]},
+    {"name": "Philosophy", "keywords": ["philosophy", "philosophical", "philosopher"],
+     "subdomains": [
+       {"name": "Ethics", "keywords": ["ethics", "ethical", "moral", "morality", "virtue", "utilitarianism", "deontology"]},
+       {"name": "Epistemology", "keywords": ["knowledge", "belief", "justification", "epistemology", "skepticism", "empiricism", "rationalism"]},
+       {"name": "Logic", "keywords": ["syllogism", "premise", "inference", "fallacy", "deduction", "induction", "validity"]},
+       {"name": "Metaphysics", "keywords": ["metaphysics", "existence", "ontology", "free will", "causation", "mind-body"]}
+     ]},
+    {"name": "Psychology", "keywords": ["psychology", "psychological", "psychologist", "behavior", "behaviour"],
+     "subdomains": [
+       {"name": "Cognitive Psychology", "keywords": ["cognition", "cognitive", "memory", "attention", "perception", "learning", "decision making"]},
+       {"name": "Developmental Psychology", "keywords": ["child development", "infant", "adolescence", "developmental", "piaget"]},
+       {"name": "Social Psychology", "keywords": ["social", "conformity", "attitude", "group behavior", "prejudice", "persuasion"]}
+     ]},
+    {"name": "Linguistics", "keywords": ["linguistics", "linguistic", "language", "languages"],
+     "subdomains": [
+       {"name": "Grammar and Syntax", "keywords": ["grammar", "syntax", "noun", "verb", "adjective", "clause", "sentence structure", "morphology"]},
+       {"name": "Phonetics and Phonology", "keywords": ["phoneme", "phonetics", "phonology", "pronunciation", "vowel", "consonant", "syllable"]},
+       {"name": "Etymology", "keywords": ["etymology", "derived from", "latin", "origin of the word", "loanword"]}
+     ]},
+    {"name": "Arts and Culture", "keywords": ["art", "arts", "culture", "cultural", "artist"],
+     "subdomains": [
+       {"name": "Music", "keywords": ["music", "musical", "song", "album", "composer", "melody", "harmony", "rhythm", "symphony", "instrument", "chord"]},
+       {"name": "Literature", "keywords": ["novel", "poem", "poetry", "author", "literary", "fiction", "narrative", "writer", "book"]},
+       {"name": "Visual Arts", "keywords": ["painting", "painter", "sculpture", "museum", "gallery", "canvas", "renaissance", "portrait"]},
+       {"name": "Film and Media", "keywords": ["film", "movie", "director", "cinema", "television", "actor", "screenplay"]},
+       {"name": "Architecture", "keywords": ["architecture", "architect", "architectural", "cathedral", "facade", "gothic"]}
+     ]},
+    {"name": "Sports", "keywords": ["sport", "sports", "athlete", "team", "championship", "league"],
+     "subdomains": [
+       {"name": "Football", "keywords": ["football", "soccer", "goal", "fifa", "premier league", "world cup", "striker"]},
+       {"name": "Olympic Sports", "keywords": ["olympic", "olympics", "athletics", "swimming", "gymnastics", "medal"]}
+     ]},
+    {"name": "Agriculture and Food", "keywords": ["agriculture", "agricultural", "farm", "farming", "food"],
+     "subdomains": [
+       {"name": "Crop Science", "keywords": ["crop", "crops", "harvest", "soil", "fertilizer", "irrigation", "wheat", "rice", "maize"]},
+       {"name": "Food Science", "keywords": ["food safety", "fermentation", "cooking", "ingredient", "recipe", "preservation"]}
+     ]},
+    {"name": "Environment", "keywords": ["environment", "environmental", "sustainability"],
+     "subdomains": [
+       {"name": "Pollution", "keywords": ["pollution", "pollutant", "emissions", "air quality", "contamination", "waste"]},
+       {"name": "Renewable Energy", "keywords": ["renewable", "solar power", "wind power", "solar panel", "wind turbine", "hydropower", "energy efficiency"]},
+       {"name": "Conservation", "keywords": ["conservation", "endangered", "wildlife", "deforestation", "protected area", "extinction"]}
+     ]},
+    {"name": "Education", "keywords": ["education", "educational", "school", "student", "students", "teacher"],
+     "subdomains": [
+       {"name": "Pedagogy", "keywords": ["teaching", "curriculum", "pedagogy", "classroom", "lesson", "learning outcomes"]},
+       {"name": "Higher Education", "keywords": ["university", "college", "degree", "undergraduate", "graduate", "academic"]}
+     ]}
+  ]
+}
