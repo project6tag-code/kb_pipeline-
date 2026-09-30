@@ -146,7 +146,19 @@ GRANT SELECT, INSERT ON TABLE kbp.chunk_relationships TO kb_pipeline_app;
 - **Verification.** Exact similarity is checked before every decision. Chunk-specific NEAR and RELATED thresholds apply, with a numeric/entity-mismatch guard: the same topic with different facts must stay `RELATED`.
 - **Representative.** Chosen by a stable rank over repository properties with a hash tie-break, never by discovery order alone.
 
-The 7B scale requires a physical index design before implementation. The existing document LSH stores 32 postings per item; directly applying it would mean up to 224 billion chunk postings before index/WAL/rebuild overhead. No candidate index has been benchmarked at that scale, so no alternative is selected here. The phase stop rule applies: do not implement an unvalidated substitute.
+The 7B scale requires a physical index design before implementation. The existing document LSH stores 32 postings per item; directly applying it would mean up to 224 billion chunk postings before index/WAL/rebuild overhead.
+
+**Resolved for staged V1:** see `docs/chunk_near_dedup_candidate_index_v1.md`.
+
+- **Five approaches benchmarked** on the same corpus and caps, from 6k to 220k chunks.
+- **Selected design:** one-permutation MinHash LSH 10×4, which gives 10 postings per chunk.
+- **Measured on the selected design:**
+  - about 222 bytes per chunk with int64 keys;
+  - end-to-end recall 97.7%;
+  - 0 false NEAR decisions;
+  - 0 fact-mismatch NEAR decisions with the fact guard.
+- **Supported scale on one PC:** up to about 100M chunks.
+- **Before 1B and 7B:** a scale transition is required (that document's §7). 7B is not a one-PC deployment.
 
 The existing PostgreSQL 17 client and Windows password-file setup were usable. The guarded migration reached `kbp_001b`; the read-only verifier and effective runtime privilege checks passed. A live downgrade has not been run.
 
@@ -160,8 +172,8 @@ The derived signature index also needs its own physical design at the 7B-chunk s
 
 ## 8. Exact Next Actions
 
-1. Resolve and benchmark a bounded candidate-index design against explicit 7B scale storage/latency/rebuild constraints.
-2. Only after that blocker is resolved, implement Chunk Near-Dedup V1:
+1. Done: the candidate-index benchmark and design (`docs/chunk_near_dedup_candidate_index_v1.md`). It needs review before implementation.
+2. Implement Chunk Near-Dedup V1 with the selected design:
    - method registration;
    - candidates, verification and decisions;
    - representative policy (§7);
