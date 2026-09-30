@@ -36,6 +36,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.processing.chunking.repository import SilverDocument
 from app.processing.dedup import near
 from app.processing.silver import config as versions
 from app.processing.silver.config import SilverConfig
@@ -132,9 +133,11 @@ def _status_reason(primary: str, results: list[GateResult]) -> str:
 
 class SilverProcessor:
     def __init__(self, config: SilverConfig, store: SilverStore, near_index: near.NearIndex, *, cc_bronze=None,
-                 gh_bronze=None, run_id: uuid.UUID | None = None, evaluator: SilverEvaluator | None = None) -> None:
+                 gh_bronze=None, run_id: uuid.UUID | None = None, evaluator: SilverEvaluator | None = None,
+                 chunker: Any = None) -> None:
         config.validate()
         self.config, self.store, self.index, self.run_id = config, store, near_index, run_id
+        self.chunker = chunker  # app.processing.chunking.service.ChunkWriter (Chunking V1) or None
         self.evaluator = evaluator or SilverEvaluator(config, cc_bronze=cc_bronze, gh_bronze=gh_bronze)
         self.extraction_version = config.extraction_version
         self.policy_version = config.policy_version
@@ -251,6 +254,11 @@ class SilverProcessor:
                 attempt_count=attempt_count, job_id=job_id, run_id=self.run_id, payload_ref=str(oid))
         self.store.insert_extraction(conn, oid, self.extraction_version, "document", doc_id, True)
         counts[f"silver_{final.status.value}"] += 1
+        if self.chunker is not None and final.status is DocumentStatus.ACCEPTED:
+            # Schema §10.3: an accepted document is chunked in the same transaction (Chunking V1).
+            counts.update(self.chunker.chunk_accepted(conn, SilverDocument(
+                doc_id, bytes.fromhex(row.content_hash), row.canonical_text, row.char_length, row.status,
+                row.status_reason, row.first_observation_id), job_id=job_id))
         return counts
 
     def _near(self, conn: Any, ev: Evaluation) -> near.NearDecision:
