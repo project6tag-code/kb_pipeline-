@@ -164,6 +164,27 @@ class FinalGateTests(unittest.TestCase):
         self.assertNotIn("b3BlbnNzaC1rZXktdjEA", repr(self.h.store.dead_letters) + repr(self.h.store.documents))
 
 
+class VersioningTests(unittest.TestCase):
+    def test_component_versions_are_single_sourced_and_drive_the_labels(self) -> None:
+        from unittest import mock
+
+        from app.processing.factuality import classifier
+        from app.processing.language import detector
+        from app.processing.silver import config as silver_config
+
+        config = SilverConfig()
+        versions = config.component_versions()
+        self.assertEqual((versions["language_detector"], versions["suitability_filter"]), ("lang2", "suit2"))
+        self.assertEqual((detector.VERSION, classifier.VERSION), ("lang2", "suit2"))
+        labels = (config.extraction_version, config.policy_version)
+        with mock.patch.object(silver_config, "LANGUAGE_DETECTOR_VERSION", "lang-other"):
+            self.assertNotEqual(config.extraction_version, labels[0])  # language decides extraction outcomes
+            self.assertNotEqual(config.policy_version, labels[1])
+        with mock.patch.object(silver_config, "SUITABILITY_FILTER_VERSION", "suit-other"):
+            self.assertEqual(config.extraction_version, labels[0])  # suitability does not affect extraction
+            self.assertNotEqual(config.policy_version, labels[1])
+
+
 class IdempotencyTests(unittest.TestCase):
     def test_rerun_creates_zero_duplicate_rows_and_same_identity(self) -> None:
         h = ProcessorHarness(self)

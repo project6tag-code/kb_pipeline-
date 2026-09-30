@@ -1,4 +1,4 @@
-"""Gate 13: local English detection (LANGUAGE_DETECTOR_VERSION ``lang1``).
+"""Gate 13: local English detection (LANGUAGE_DETECTOR_VERSION ``lang2``).
 
 Layered, deterministic, dependency-free, fast on one PC:
 
@@ -35,7 +35,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-VERSION = "lang1"
+VERSION = "lang2"
 
 _WORDS: dict[str, str] = {
     "en": "the of and to that is was for it with as his on be at by this had not are but from have they which "

@@ -1,6 +1,6 @@
 # Bronze → Silver Preprocessing V1
 
-Status: implemented and tested offline. It has not been run against PostgreSQL. No chunking, embeddings or Gold publication.
+Status: implemented, tested offline, and validated on PostgreSQL `kb_pipeline_test` with a tiny deterministic pilot (§9). No chunking, embeddings or Gold publication.
 
 Silver is the set of `kbp.document_registry` rows with `status = 'accepted'`, together with their provenance and decisions. Quality comes before volume: a questionable document is rejected or held, never silently promoted.
 
@@ -26,7 +26,7 @@ Commands:
 
 ```
 python -m app.processing.silver.cli versions                   # labels + component versions (no I/O)
-python -m app.processing.silver.cli register-methods           # MIGRATOR ONLY, once (see §6)
+python -m app.processing.silver.cli register-methods --expect-database <db>   # MIGRATOR ONLY, once (see §6)
 python -m app.processing.silver.cli work --source cc|github    # worker with the Silver stage
 python -m app.processing.silver.cli status                     # counts (read-only)
 ```
@@ -146,10 +146,10 @@ Thresholds: near-duplicate 0.80; VERSION (same URL or same repository path) 0.50
 **Registration.** `kb_pipeline_app` cannot insert into `kbp.dedup_methods`. Register the method once, as the migrator:
 
 ```
-python -m app.processing.silver.cli register-methods
+python -m app.processing.silver.cli register-methods --expect-database <db>
 ```
 
-It is idempotent and verifies the frozen parameters. Until it has run, Silver persistence stops with `dedup_method_not_registered` (retried).
+It is idempotent and verifies the frozen parameters. Before writing, it refuses unless the connection is on exactly `--expect-database`, as `kb_pipeline_migrator`, at revision `kbp_001a`. Until it has run, Silver persistence stops with `dedup_method_not_registered` (retried).
 
 ## 7. Resource limits (`SilverConfig`)
 
@@ -171,3 +171,45 @@ Batch size and concurrency come from the acquisition configuration. Processing i
 - Site-level (cross-page) boilerplate is not learned. Cleaning is per page.
 - Code files need at least 25 words of English comments or docstrings.
 - The near-dup index is a local SQLite file. Multi-node use needs O-13.
+
+## 9. PostgreSQL validation (kb_pipeline_test)
+
+**Version labels.** Before the first persistence, the calibrated language detector and suitability classifier were relabelled. Each version is now defined once, in its component module:
+
+| label | before | after |
+|---|---|---|
+| language detector | `lang1` | `lang2` |
+| suitability filter | `suit1` | `suit2` |
+| `extraction_version` | `x1-9e4aa54325` | `x1-51c9f32d50` |
+| `policy_version` | `s1-c8379dc220` | `s1-65d0ac2798` |
+
+**Commands.** Passwords come from pgpass, never from the URL.
+
+```
+set KB_MIGRATION_DATABASE_URL=postgresql+psycopg://kb_pipeline_migrator@localhost:5432/kb_pipeline_test
+python -m app.processing.silver.cli register-methods --expect-database kb_pipeline_test
+
+set KB_INTEGRATION_DATABASE_URL=postgresql+psycopg://kb_pipeline_app@localhost:5432/kb_pipeline_test
+python -m tests.integration.silver_pilot run        # before counts -> pilot -> reprocess -> after counts
+set KB_RUN_PG_INTEGRATION=1
+python -m unittest tests.integration.test_silver_postgres -v
+```
+
+**What the pilot is.** `tests/integration/silver_pilot.py` runs the real Runtime Engine worker, the real acquisition handlers with the Silver stage, and the Postgres stores. Only HTTP is faked (in-memory transports).
+
+It uses fixed synthetic identities, because pilot rows are permanent:
+- crawl `CC-MAIN-1999-00`
+- repository `900000000001`
+- `*.silver-pilot.example` URLs
+
+It refuses any database other than `kb_pipeline_test`.
+
+**Result.**
+- 10 observations: 6 Common Crawl, 4 GitHub.
+- 10 extractions: 8 documents, 2 `rejected_language`.
+- 6 documents: 3 accepted, 1 `rejected_near_duplicate`, 1 `rejected_policy` (PII), 1 `quarantined` (secret).
+- 2 exact-duplicate links: the CC mirror, and the GitHub copy of a CC page. All three observations resolve to one document.
+- 4 dedup decisions (1 NEAR_DUPLICATE, 3 UNIQUE) and 1 relationship.
+- 1 quarantine dead letter.
+
+A rerun of the pilot adds zero rows. A reprocess of all 10 observations with fresh evaluations recomputes the same document IDs and detects no nondeterminism.

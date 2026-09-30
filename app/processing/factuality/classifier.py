@@ -1,4 +1,4 @@
-"""Gate 18: factual-KB suitability (SUITABILITY_FILTER_VERSION ``suit1``).
+"""Gate 18: factual-KB suitability (SUITABILITY_FILTER_VERSION ``suit2``).
 
 Answers "is this document useful material for a factual knowledge base?",
 NOT "is it true": a PASS never means the content was verified.
@@ -34,7 +34,7 @@ from dataclasses import dataclass
 
 from app.processing.quality.scorer import TextFeatures
 
-VERSION = "suit1"
+VERSION = "suit2"
 
 PASS, FAIL, UNRESOLVED = "PASS", "FAIL", "UNRESOLVED"
 

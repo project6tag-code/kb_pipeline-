@@ -26,18 +26,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.processing.factuality.classifier import VERSION as SUITABILITY_FILTER_VERSION
+from app.processing.language.detector import VERSION as LANGUAGE_DETECTOR_VERSION
 from app.processing.normalization.text import CANONICALIZATION_VERSION
 
-# Code versions: bump when the component's output can change.
+# Code versions: bump when the component's output can change. The language and
+# suitability versions are defined once, in their component modules (imported above).
 EXTRACTOR_VERSION = "ext1"
 HTML_CLEANER_VERSION = "html1"
 DECODER_VERSION = "dec1"
-LANGUAGE_DETECTOR_VERSION = "lang1"
 PRIVACY_DETECTOR_VERSION = "pii1"
 SECRET_DETECTOR_VERSION = "sec1"
 NOISE_FILTER_VERSION = "noise1"
 QUALITY_FILTER_VERSION = "qual1"
-SUITABILITY_FILTER_VERSION = "suit1"
 EXACT_DEDUP_VERSION = "exact1"          # Identity V1 content hash (document_was_new)
 NEAR_DEDUP_ALGORITHM = "minhash_lsh"     # kbp.dedup_methods.algorithm
 NEAR_DEDUP_VERSION = "oph-mh128-b32r4-w5-v1"

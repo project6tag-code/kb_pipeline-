@@ -25,11 +25,39 @@ GET_METHOD_SQL = """
 SELECT dedup_method_id, parameters FROM kbp.dedup_methods WHERE algorithm = :algorithm AND algorithm_version = :version
 """
 
+# Read-only target checks, run before any write.
+TARGET_SQL = """
+SELECT current_database() AS database, current_user AS role,
+       to_regclass('kbp.dedup_methods') IS NOT NULL AS has_table,
+       (SELECT version_num FROM kbp.alembic_version) AS revision
+"""
+EXPECTED_ROLE = "kb_pipeline_migrator"
+EXPECTED_REVISION = "kbp_001a"
 
-def register_methods(conn: Any) -> dict[str, Any]:
+
+class BootstrapTargetError(RuntimeError):
+    pass
+
+
+def verify_target(conn: Any, expect_database: str) -> dict[str, Any]:
+    """Refuse unless connected to exactly ``expect_database`` as the migrator at revision kbp_001a."""
+    from sqlalchemy import text
+
+    row = dict(conn.execute(text(TARGET_SQL)).mappings().one())
+    if row["database"] != expect_database:
+        raise BootstrapTargetError(f"connected to database {row['database']!r}, expected {expect_database!r}")
+    if row["role"] != EXPECTED_ROLE:
+        raise BootstrapTargetError(f"connected as {row['role']!r}; register-methods must run as {EXPECTED_ROLE}")
+    if not row["has_table"] or row["revision"] != EXPECTED_REVISION:
+        raise BootstrapTargetError(f"kbp schema is not at {EXPECTED_REVISION} (revision {row['revision']!r})")
+    return row
+
+
+def register_methods(conn: Any, *, expect_database: str) -> dict[str, Any]:
     """Idempotently register the near-duplicate method; verify frozen parameters. Returns the row."""
     from sqlalchemy import text
 
+    verify_target(conn, expect_database)
     params = {"algorithm": near.ALGORITHM, "version": near.VERSION,
               "parameters": json.dumps(near.PARAMETERS, sort_keys=True)}
     conn.execute(text(REGISTER_METHOD_SQL), params)
@@ -37,4 +65,5 @@ def register_methods(conn: Any) -> dict[str, Any]:
     stored = row[1] if isinstance(row[1], dict) else json.loads(row[1])
     if stored != near.PARAMETERS:
         raise RuntimeError(f"dedup method {near.ALGORITHM}:{near.VERSION} exists with different parameters")
-    return {"dedup_method_id": int(row[0]), "algorithm": near.ALGORITHM, "algorithm_version": near.VERSION}
+    return {"database": expect_database, "dedup_method_id": int(row[0]), "algorithm": near.ALGORITHM,
+            "algorithm_version": near.VERSION}

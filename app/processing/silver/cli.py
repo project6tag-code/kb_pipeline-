@@ -1,11 +1,13 @@
 """Operator commands for Bronze -> Silver Preprocessing V1.
 
     python -m app.processing.silver.cli versions                  # component versions and labels (no I/O)
-    python -m app.processing.silver.cli register-methods          # MIGRATOR ONLY: register the near-dup method
+    python -m app.processing.silver.cli register-methods --expect-database NAME
+                                                                  # MIGRATOR ONLY: register the near-dup method
     python -m app.processing.silver.cli work --source cc|github   # acquisition worker with the Silver stage
     python -m app.processing.silver.cli status                    # Silver counts (DB, read-only)
 
-``register-methods`` uses KB_MIGRATION_DATABASE_URL (kb_pipeline_migrator);
+``register-methods`` uses KB_MIGRATION_DATABASE_URL (kb_pipeline_migrator) and refuses to write
+unless the connected database is exactly ``--expect-database`` at revision kbp_001a;
 the other database commands use KB_DATABASE_URL (kb_pipeline_app).
 """
 
@@ -24,14 +26,14 @@ def cmd_versions(config: SilverConfig, _args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_register_methods(_config: SilverConfig, _args: argparse.Namespace) -> int:
+def cmd_register_methods(_config: SilverConfig, args: argparse.Namespace) -> int:
     from app.db.migration_config import create_migration_engine, get_migration_url
     from app.processing.silver.bootstrap import register_methods
 
     engine = create_migration_engine(get_migration_url())
     try:
         with engine.begin() as conn:
-            print(json.dumps(register_methods(conn)))
+            print(json.dumps(register_methods(conn, expect_database=args.expect_database)))
         return 0
     finally:
         engine.dispose()
@@ -65,7 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.processing.silver.cli")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("versions")
-    sub.add_parser("register-methods")
+    register = sub.add_parser("register-methods")
+    register.add_argument("--expect-database", required=True,
+                          help="the exact database name the connection must be on (refuses otherwise)")
     work = sub.add_parser("work")
     work.add_argument("--source", choices=("cc", "github"), required=True)
     work.add_argument("--max-iterations", type=int, default=None)
