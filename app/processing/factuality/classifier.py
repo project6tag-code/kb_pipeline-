@@ -3,18 +3,23 @@
 Answers "is this document useful material for a factual knowledge base?",
 NOT "is it true": a PASS never means the content was verified.
 
-Deterministic rules over cleaned text. Signals are rates per 1,000 words,
-so length does not decide by itself.
+Deterministic rules over cleaned text, so length does not decide by itself:
 
-Positive: definitional/explanatory sentences ("is a", "refers to", "is
-defined as", "consists of", "is used to"), quantities with units, dates,
-technical vocabulary (long words), reference apparatus (``[1]``, DOI, ISBN,
-"et al.", References), documentation cues (parameters, returns, usage,
-install, configuration), and structure (headings, lists, tables, code).
+    score = 0.8 * factual_share + 0.25 * min(1, knowledge / 2) - 0.35 * promo_share
+            (- 0.1 for very short lines)
 
-Negative: first-person chatter, opinion markers, promotional/call-to-action
-language, conversational/forum phrases, emoji/hashtag/mention density,
-question-heavy text and very short lines.
+* ``factual_share``: share of sentences (>= 4 words; headings/tables/code
+  excluded) that are neither personal (first person, opinion markers,
+  conversational/forum phrases, hashtags/mentions/emoji, questions) nor
+  promotional (sales / call-to-action language).
+* ``knowledge``: rates per 1,000 words of definitional/explanatory phrasing
+  ("is a", "refers to", "is defined as", "consists of", "is used to"),
+  quantities with units and dates, reference apparatus (``[1]``, DOI, ISBN,
+  "et al.", References), documentation cues (parameters, returns, usage,
+  install, configuration), technical vocabulary and structure.
+
+A document mixing factual statements with personal remarks therefore lands in
+the UNRESOLVED band instead of being silently accepted or rejected.
 
 Code: base value plus documentation (comment/docstring share, doc cues).
 
@@ -24,7 +29,6 @@ otherwise UNRESOLVED.
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass
 
@@ -47,7 +51,7 @@ _DOC_CUE = re.compile(r"\b(returns?|parameters?|arguments?|usage|example|example
                       r"specification|algorithm|theorem|equation|definition|procedure|overview|introduction)\b", re.I)
 _FIRST_PERSON = re.compile(r"\b(i|me|my|mine|i'm|i've|i'd|i'll)\b", re.I)
 _OPINION = re.compile(r"\b(i think|i feel|i believe|in my opinion|imo|imho|i love|i hate|i like|best ever|so cool"
-                      r"|amazing|awesome|terrible|worst|lol|lmao|omg|wtf|haha)\b|!{2,}", re.I)
+                      r"|amazing|awesome|terrible|worst(?![- ]case)|lol|lmao|omg|wtf|haha)\b|!{2,}", re.I)
 _PROMO = re.compile(r"(\bbuy\b|\bsale\b|discount|% off|free shipping|order now|shop now|\bdeals?\b|coupon|"
                     r"limited time|best price|add to cart|special offer|subscribe now|sign up|call now|"
                     r"don't miss|act now|exclusive offer)", re.I)
@@ -68,8 +72,14 @@ def _rate(pattern: re.Pattern[str], text: str, words: int) -> float:
     return len(pattern.findall(text)) * 1000.0 / max(words, 1)
 
 
-def _squash(x: float) -> float:
-    return 1.0 / (1.0 + math.exp(-x))
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _is_personal(sentence: str) -> bool:
+    """First-person, opinion, conversational or social sentence, or a question."""
+    return (sentence.rstrip().endswith("?") or _FIRST_PERSON.search(sentence) is not None
+            or _OPINION.search(sentence) is not None or _CHAT.search(sentence) is not None
+            or _SOCIAL.search(sentence) is not None)
 
 
 def classify(text: str, f: TextFeatures, *, kind: str, pass_threshold: float, fail_threshold: float,
@@ -97,16 +107,23 @@ def classify(text: str, f: TextFeatures, *, kind: str, pass_threshold: float, fa
             value -= 0.15
             reasons.append("configuration")
     else:
-        positive = (min(signals["definition"], 40) / 40 * 1.2 + min(signals["quantity"] + signals["year"], 30) / 30 * 0.6
-                    + min(signals["reference"], 10) / 10 * 0.6 + min(signals["doc_cue"], 25) / 25 * 0.5
-                    + min(long_words, 120) / 120 * 0.6 + min(signals["structure"], 6) / 6 * 0.4)
-        negative = (min(signals["first_person"], 60) / 60 * 1.2 + min(signals["opinion"], 15) / 15 * 1.0
-                    + min(signals["promo"], 30) / 30 * 1.4 + min(signals["chat"], 15) / 15 * 0.8
-                    + min(signals["social"], 20) / 20 * 0.8 + min(signals["questions"], 60) / 60 * 0.6)
+        sentences = [s for s in _SENTENCE_SPLIT.split(text)
+                     if len(s.split()) >= 4 and not s.lstrip().startswith(("#", "|", "```"))]
+        personal = sum(1 for s in sentences if _is_personal(s))
+        promotional = sum(1 for s in sentences if not _is_personal(s) and _PROMO.search(s))
+        total = max(len(sentences), 1)
+        factual_share = (len(sentences) - personal - promotional) / total if sentences else 0.0
+        knowledge = (min(signals["definition"], 40) / 40 * 1.2 + min(signals["quantity"] + signals["year"], 30) / 30 * 0.6
+                     + min(signals["reference"], 10) / 10 * 0.6 + min(signals["doc_cue"], 25) / 25 * 0.5
+                     + min(long_words, 120) / 120 * 0.6 + min(signals["structure"], 6) / 6 * 0.4)
+        signals.update(factual_share=factual_share, personal_share=personal / total,
+                       promo_share=promotional / total)
+        value = 0.8 * factual_share + 0.25 * min(1.0, knowledge / 2) - 0.35 * promotional / total
         if f.mean_line_len < 40 and f.lines >= 10:
-            negative += 0.4
+            value -= 0.1
             reasons.append("short_lines")
-        value = _squash(2.2 * (positive - negative) - 0.2)
+        if sentences and personal / total >= 0.25:
+            reasons.append("personal_sentences")
         for name, limit in (("first_person", 30), ("opinion", 6), ("promo", 12), ("chat", 8), ("social", 10),
                             ("questions", 40)):
             if signals[name] >= limit:

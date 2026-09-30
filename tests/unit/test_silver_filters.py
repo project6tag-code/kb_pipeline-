@@ -168,6 +168,9 @@ class SuitabilityTests(unittest.TestCase):
         result = self.classify(REFERENCE)
         self.assertEqual(result.decision, suitability.PASS, result)
         self.assertIn("has_definition", result.reasons)
+        technical = self.classify("Quicksort runs in O(n log n) time on average and in quadratic time in the worst "
+                                  "case. The pivot choice determines the balance of the partitions. " * 3)
+        self.assertEqual((technical.decision, technical.signals["personal_share"]), (suitability.PASS, 0.0))
 
     def test_conversational_noise_fails(self) -> None:
         chatter = ("lol I think this is the best ever!!! I love it so much, omg. Thanks everyone, hey guys reply "
@@ -208,14 +211,18 @@ class DomainTests(unittest.TestCase):
                                "discuss the plan and then take a short break before lunch.")
         self.assertEqual((result.decision, result.label), (domain.UNKNOWN, None))
 
+    AI = ("A neural network is a machine learning model trained on a dataset with gradient descent; deep "
+          "learning uses transformer models for classification and reinforcement learning. ")
+
     def test_multi_domain_is_explicit(self) -> None:
-        text = self.QUANTUM + "\n\n" + ("A neural network is a machine learning model trained on a dataset with "
-                                        "gradient descent; deep learning uses transformer models for "
-                                        "classification and reinforcement learning. ") * 2
-        result = self.classify(text)
-        self.assertEqual(result.decision, domain.MULTI)
-        self.assertTrue(any(r.startswith("multi_domain:") for r in result.reasons))
+        # Comparable evidence (second >= multi_ratio x top): primary kept, secondary recorded, no subdomain.
+        result = self.classify(self.QUANTUM + "\n\n" + self.AI)
+        self.assertEqual((result.decision, result.label), (domain.MULTI, "Physics"))
+        self.assertIn("multi_domain:Computer Science", result.reasons)
         self.assertIsNone(result.subdomain)
+        # A clearly dominant domain is assigned, not reported as multi-domain.
+        dominant = self.classify(self.QUANTUM + "\n\n" + self.AI * 3)
+        self.assertEqual((dominant.decision, dominant.domain), (domain.ASSIGNED, "Computer Science"))
 
     def test_taxonomy_is_configurable_data(self) -> None:
         taxonomy = domain.load_taxonomy()

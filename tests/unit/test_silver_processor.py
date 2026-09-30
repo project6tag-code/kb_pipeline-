@@ -24,6 +24,33 @@ and a correct version for arrays of every length was published in 1960. The meth
 elements, so it is not used on linked lists. Variants include exponential search and interpolation search, which
 are used when the size of the array is unknown or the values are uniformly distributed."""
 
+MERGE_SORT = """# Merge sort
+
+Merge sort is a divide-and-conquer sorting algorithm that splits an array into two halves, sorts each half
+recursively and merges the sorted halves. It was invented by John von Neumann in 1945. The algorithm runs in
+O(n log n) time in the worst case and requires additional memory proportional to the input size. Merge sort is
+stable, which means that equal elements keep their relative order, and it is well suited to sorting linked lists
+and very large files stored on disk."""
+
+# Half factual statements, half personal remarks: suitability is UNRESOLVED (held, not promoted).
+STATION = """# Central station
+
+The station opened in 1998 and has two platforms. I think the new cafe on the upper level is nice.
+Trains run every 15 minutes to the city centre and every hour to the airport. What do you think of it?
+The ticket office is open from 6 am to 11 pm on weekdays. I visited last week with my friend and we loved it.
+A bus terminal with 12 bays was added next to the main entrance in 2015. Honestly I would go back again soon.
+Parking for 400 cars is available on the east side of the building. My friend says the coffee is amazing."""
+
+# Varied (not repeated) forum chatter: it passes the noise gate and is rejected by suitability.
+CHATTER = """# Weekend thread
+
+lol I think this was the best weekend ever!!! Thanks everyone who came to the meetup, you guys are awesome.
+Hey guys, did anyone else get soaked on the way home? I totally did, omg.
+My friend says the pizza place was terrible but I loved it honestly.
+Reply below if you want to join next time, and follow me for the photos.
+I'm so happy with how it turned out, amazing crowd and great vibes all night.
+Can't wait for the next one, who is in? I will bring snacks this time for sure."""
+
 
 class ProcessorHarness:
     def __init__(self, test: unittest.TestCase, config: SilverConfig | None = None) -> None:
@@ -49,7 +76,8 @@ class ProcessorHarness:
 
     def run(self, refs):
         prepared = self.processor.prepare(Ctx(), refs)
-        return self.processor.persist(None, prepared, job_id=7, attempt_count=1)
+        with self.store.atomic():  # the acquisition batch transaction
+            return self.processor.persist(None, prepared, job_id=7, attempt_count=1)
 
     def doc(self, ref):
         return self.store.document_for(ref, self.processor.extraction_version)
@@ -94,19 +122,13 @@ class FinalGateTests(unittest.TestCase):
                 "<h1>404 Page not found</h1><p>Sorry, the page you requested does not exist or has been removed. "
                 "Please check the address and try again, or return to the home page to continue browsing.</p>"
                 "<p>The page may have been moved to a new location on this website.</p>")),
-            "chatter": h.gh_doc("notes/chat.md", ("lol I think this is the best ever!!! I love it so much, omg. "
-                                                  "Thanks everyone, hey guys reply below and follow me. I'm so "
-                                                  "happy I bought it, amazing!! ") * 6),
+            "chatter": h.gh_doc("notes/chat.md", CHATTER),
             "ssn": h.gh_doc("docs/customer.md", REFERENCE + "\n\nCustomer SSN: 123-45-6789 is stored here."),
             "french": h.gh_doc("docs/fr.md", ("La photosynthèse est le processus par lequel les plantes vertes "
                                               "convertissent l'énergie lumineuse en énergie chimique. Elle se "
                                               "déroule dans les chloroplastes des cellules des feuilles. ") * 3),
             "empty": h.cc_doc("https://example.com/empty", b"<html><body><nav><a href='/'>Home</a></nav></body></html>"),
-            "unresolved": h.gh_doc("docs/station.md", ("# Central station\n\nThe station opened in 1998 and has "
-                                                       "two platforms. I think the new cafe is nice and I love the "
-                                                       "coffee there. Trains run every 15 min to the city centre. "
-                                                       "What do you think? I visited last week with my friend and "
-                                                       "we had a great time.\n\n") * 3),
+            "unresolved": h.gh_doc("docs/station.md", STATION),
         }
         h.run(list(refs.values()))
         self.assertEqual(h.doc(refs["spam"])["status"], "rejected_quality")
@@ -160,16 +182,19 @@ class IdempotencyTests(unittest.TestCase):
 
     def test_crash_mid_batch_then_retry_completes_without_duplicates(self) -> None:
         h = ProcessorHarness(self)
-        refs = [h.gh_doc("a.md", REFERENCE), h.gh_doc("b.md", REFERENCE.replace("Binary search", "Bisection")),
+        refs = [h.gh_doc("a.md", REFERENCE), h.gh_doc("b.md", MERGE_SORT),
                 h.cc_doc("https://example.com/p", article_html())]
         h.store.fail_on_extraction_insert = 2
         with self.assertRaises(ConnectionError):
-            h.run(refs)  # no rollback in the fake: the partial writes of the crashed attempt persist
+            h.run(refs)  # crash after the first document of the batch was written
+        self.assertEqual(h.store.snapshot(), (0, 0, 0, 0, 0))  # the batch transaction rolled back entirely
+        self.assertGreater(h.index.size(), 0)  # stale near-index entries of the rolled-back batch remain ...
         h.store.fail_on_extraction_insert = None
-        h.run(refs)
-        self.assertEqual(len(h.store.extractions), 3)
-        self.assertEqual(len(h.store.documents), 3)
+        counts = h.run(refs)
+        self.assertEqual(counts["silver_accepted"], 3)  # ... and are harmless: re-checked against the registry
+        self.assertEqual((len(h.store.extractions), len(h.store.documents)), (3, 3))
         self.assertEqual({row["document_was_new"] for row in h.store.extractions.values()}, {True})
+        self.assertEqual({d["classification"] for d in h.store.decisions.values()}, {"UNIQUE"})
         h.run(refs)
         self.assertEqual((len(h.store.extractions), len(h.store.documents)), (3, 3))
 

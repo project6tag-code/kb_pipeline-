@@ -12,9 +12,13 @@ Layered, deterministic, dependency-free, fast on one PC:
    ``score[L] = hits[L] / tokens``. English confidence is
    ``score[en] / (score[en] + best other score)``, damped by the share of
    letters with diacritics (rare in English).
-3. **Block layer.** Paragraph blocks with enough tokens are classified on their
-   own; when non-English blocks hold at least ``mixed_fraction`` of the text,
-   the document is MIXED.
+3. **Block layer** (before the document verdict). Paragraph blocks with enough
+   tokens are classified on their own. The document is MIXED when non-English
+   blocks hold at least ``mixed_fraction`` of the text and it is either English
+   overall or its English blocks also hold at least ``mixed_fraction``.
+
+Words that are function words in English *and* in another language (``i``,
+``a``, ``in``, ...) are neutral: they count for no language.
 
 Decisions: ENGLISH (confidence >= threshold, not mixed), NON_ENGLISH (another
 language or script dominates), MIXED, UNRESOLVED (too short, too few function
@@ -41,7 +45,8 @@ _WORDS: dict[str, str] = {
           "well down should because each just those how too little good very make world still own see men work "
           "long get here between both life being under never day same another know while last might us great old "
           "year off come since against go came right used take three however although therefore thus whether "
-          "within without during upon among whose these those which would could should shall does doing done",
+          "within without during upon among whose these those which would could should shall does doing done "
+          "i a an in",
     "fr": "le la les des du une est et en que qui dans pour pas sur au aux avec ce cette il elle ils elles sont "
           "par plus ne se son sa ses ou mais nous vous leur été être fait comme tout bien aussi très même sans "
           "peut dont où ont était sont entre après avant sous chez leurs notre votre cela ces lui y je",
@@ -194,23 +199,27 @@ def detect(text: str, *, min_tokens: int, min_confidence: float, mixed_fraction:
     if n_tokens < min_tokens:
         return LanguageResult(Decision.UNRESOLVED, round(confidence, 4), None, n_tokens,
                               tuple(reasons + ["too_short"]), scores)
+    # Block layer, before the document verdict: substantial foreign blocks in an English document, or
+    # substantial English blocks in a foreign one, make the document MIXED.
+    english = foreign = total = 0
+    for block in prose.split("\n\n"):
+        weight = len(block)
+        total += weight
+        if len(_TOKEN.findall(block)) < 15:
+            continue
+        block_decision = _classify(block)[0]
+        if block_decision == Decision.ENGLISH:
+            english += weight
+        elif block_decision == Decision.NON_ENGLISH:
+            foreign += weight
+    if total and foreign / total >= mixed_fraction and (decision == Decision.ENGLISH
+                                                         or english / total >= mixed_fraction):
+        return LanguageResult(Decision.MIXED, round(confidence, 4), None, n_tokens,
+                              tuple(reasons + [f"foreign_blocks={foreign / total:.2f}",
+                                               f"english_blocks={english / total:.2f}"]), scores)
     if decision != Decision.ENGLISH:
         return LanguageResult(decision, round(confidence, 4), other if decision == Decision.NON_ENGLISH else None,
                               n_tokens, tuple(reasons), scores)
-    # Block layer: substantial non-English blocks make the document MIXED.
-    foreign = total = 0
-    for block in prose.split("\n\n"):
-        block_tokens = len(_TOKEN.findall(block))
-        weight = len(block)
-        total += weight
-        if block_tokens < 15:
-            continue
-        block_decision, _conf, _o, _n, _s, _r = _classify(block)
-        if block_decision == Decision.NON_ENGLISH:
-            foreign += weight
-    if total and foreign / total >= mixed_fraction:
-        return LanguageResult(Decision.MIXED, round(confidence, 4), None, n_tokens,
-                              tuple(reasons + [f"foreign_blocks={foreign / total:.2f}"]), scores)
     if confidence < min_confidence:
         return LanguageResult(Decision.UNRESOLVED, round(confidence, 4), None, n_tokens,
                               tuple(reasons + ["low_confidence"]), scores)

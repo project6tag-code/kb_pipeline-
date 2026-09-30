@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import copy
 import hashlib
 import uuid
 from datetime import datetime, timezone
@@ -112,7 +114,24 @@ def store_gh(bronze: GitHubBronze, path: str, content: bytes | str, *, repositor
 
 
 class InMemorySilverStore:
-    """SilverStore with Schema V1 constraint semantics (no rollback: partial writes persist on a crash)."""
+    """SilverStore with Schema V1 constraint semantics.
+
+    ``atomic()`` gives PostgreSQL transaction semantics: an exception inside it
+    restores every table to its state at the start (the batch transaction of
+    the acquisition handler rolls back as a whole).
+    """
+
+    _TABLES = ("observations", "documents", "hashes", "extractions", "decisions", "relationships", "dead_letters")
+
+    @contextlib.contextmanager
+    def atomic(self):
+        saved = {name: copy.deepcopy(getattr(self, name)) for name in self._TABLES}
+        try:
+            yield None
+        except BaseException:
+            for name, value in saved.items():
+                setattr(self, name, value)
+            raise
 
     def __init__(self) -> None:
         self.observations: dict[uuid.UUID, str] = {}           # observation_id -> lineage key
