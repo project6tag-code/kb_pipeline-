@@ -62,8 +62,12 @@ def build_sources():
     return site, gh, head
 
 
-def run_inline(db, root: Path = PILOT_ROOT) -> dict[str, Any]:
-    """Acquire + Silver + inline chunking of the two pilot documents through the Runtime Engine."""
+def run_inline(db, root: Path = PILOT_ROOT, *, sources=None, cdx: str = PILOT_CDX, repo: int = PILOT_REPO,
+               name: str = "chunk-pilot", iterations: int = 2) -> dict[str, Any]:
+    """Acquire + Silver + inline chunking of the pilot documents through the Runtime Engine.
+
+    ``sources`` (site, gh, head), ``cdx``, ``repo`` and ``name`` let other pilots reuse this exact path.
+    """
     from app.config.settings import WorkerSettings
     from app.processing.chunking.repository import PostgresChunkStore
     from app.processing.chunking.service import ChunkWriter
@@ -90,7 +94,7 @@ def run_inline(db, root: Path = PILOT_ROOT) -> dict[str, Any]:
     from app.workers.runtime import Worker
     from tests.unit.cc_fixtures import FakeTransport
 
-    site, gh, head = build_sources()
+    site, gh, head = sources or build_sources()
     root.mkdir(parents=True, exist_ok=True)
     queue = JobQueue(db)
     config = SilverConfig(near_index_path=root / "near_index.sqlite3")
@@ -101,31 +105,33 @@ def run_inline(db, root: Path = PILOT_ROOT) -> dict[str, Any]:
     try:
         processor = SilverProcessor(config, PostgresSilverStore(), index, cc_bronze=cc_bronze, gh_bronze=gh_bronze,
                                     chunker=ChunkWriter(PostgresChunkStore()))
-        cc_client = HttpClient(transport=FakeTransport(site))
-        cc_prefix = f"{PILOT_CRAWL}/cc-index/collections/{PILOT_CRAWL}/indexes/{PILOT_CDX}"
-        report["cc_partitions_created"] = CrawlPlanner(
-            cc_client, queue, PostgresCaptureStore(), planning=PlanningConfig(blocks_per_partition=10),
-            filter_config=FilterConfig(), policy=CC_PARTITION_POLICY,
-            max_block_bytes=16 * 1024 * 1024).plan([PILOT_CRAWL]).crawls[0].created
-        cc_registry = HandlerRegistry()
-        cc_registry.register(JobType.CC_INDEX_PARTITION, CCPartitionHandler(
-            client=cc_client, store=PostgresCaptureStore(), bronze=cc_bronze,
-            config=AcquisitionConfig(bronze_root=root / "bronze-cc"), silver=processor), policy=CC_PARTITION_POLICY)
-        report["cc_worker"] = vars(Worker(queue, cc_registry, settings=WorkerSettings(
-            lease_seconds=120, poll_interval_seconds=0, source_identifier_prefix=cc_prefix),
-            worker_id="chunk-pilot-cc").run(max_iterations=2))
+        if site is not None:  # a GitHub-only source set skips Common Crawl
+            cc_client = HttpClient(transport=FakeTransport(site))
+            cc_prefix = f"{PILOT_CRAWL}/cc-index/collections/{PILOT_CRAWL}/indexes/{cdx}"
+            report["cc_partitions_created"] = CrawlPlanner(
+                cc_client, queue, PostgresCaptureStore(), planning=PlanningConfig(blocks_per_partition=10),
+                filter_config=FilterConfig(), policy=CC_PARTITION_POLICY,
+                max_block_bytes=16 * 1024 * 1024).plan([PILOT_CRAWL]).crawls[0].created
+            cc_registry = HandlerRegistry()
+            cc_registry.register(JobType.CC_INDEX_PARTITION, CCPartitionHandler(
+                client=cc_client, store=PostgresCaptureStore(), bronze=cc_bronze,
+                config=AcquisitionConfig(bronze_root=root / "bronze-cc"), silver=processor),
+                policy=CC_PARTITION_POLICY)
+            report["cc_worker"] = vars(Worker(queue, cc_registry, settings=WorkerSettings(
+                lease_seconds=120, poll_interval_seconds=0, source_identifier_prefix=cc_prefix),
+                worker_id=f"{name}-cc").run(max_iterations=iterations))
+            cc_client.close()
         gh_client = GitHubClient(gh_settings.http, gh_settings.credentials, transport=gh)
         gh_registry = HandlerRegistry()
         register_github_handlers(gh_registry, gh_settings, client=gh_client, store=PostgresGitHubStore(),
                                  bronze=gh_bronze, silver=processor)
         report["gh_job_created"] = queue.enqueue(JobSpec.for_policy(
             GH_POLICY, job_type=JobType.GH_REPOSITORY_SNAPSHOT, source=JobSource.GITHUB,
-            source_identifier=gh_repository_snapshot(PILOT_REPO, head),
+            source_identifier=gh_repository_snapshot(repo, head),
             checkpoint={"v": 1, "previous": None, "ref": "main"})).created
         report["gh_worker"] = vars(Worker(queue, gh_registry, settings=WorkerSettings(
-            lease_seconds=120, poll_interval_seconds=0, source_identifier_prefix=f"{PILOT_REPO}@"),
-            worker_id="chunk-pilot-gh").run(max_iterations=2))
-        cc_client.close()
+            lease_seconds=120, poll_interval_seconds=0, source_identifier_prefix=f"{repo}@"),
+            worker_id=f"{name}-gh").run(max_iterations=iterations))
         gh_client.close()
         return report
     finally:

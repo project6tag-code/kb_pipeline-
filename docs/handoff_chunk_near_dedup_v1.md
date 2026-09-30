@@ -1,6 +1,6 @@
 # Handoff: Global Near-Duplicate Chunk Dedup V1
 
-Status: **Migration 001B is applied and validated on `kb_pipeline_test`. Chunk near-dedup implementation has not started.**
+Status: **Global Chunk Near-Dedup V1 is implemented and validated on `kb_pipeline_test`** (`docs/chunk_near_dedup_v1.md`). Sections 1–7 below are the historical record of how it got there. Embeddings and Gold have not started.
 
 ## 1. Repository state
 
@@ -172,13 +172,15 @@ The derived signature index also needs its own physical design at the 7B-chunk s
 
 ## 8. Exact Next Actions
 
-1. Done: the candidate-index benchmark and design (`docs/chunk_near_dedup_candidate_index_v1.md`). It needs review before implementation.
-2. Implement Chunk Near-Dedup V1 with the selected design:
+1. Done: the candidate-index benchmark and design (`docs/chunk_near_dedup_candidate_index_v1.md`).
+2. Done: Global Chunk Near-Dedup V1 (`docs/chunk_near_dedup_v1.md`). This covers:
    - method registration;
-   - candidates, verification and decisions;
-   - representative policy (§7);
-   - idempotency and concurrency;
+   - the side index;
+   - verification and the fact guard;
+   - decisions, representatives and eligibility;
+   - backfill, rebuild and audit;
    - tests;
-   - a PostgreSQL pilot with a rerun proof.
+   - the PostgreSQL pilot with rerun and rebuild proofs.
+3. Next: Embeddings V1 (not started). It selects chunks through `app.processing.chunk_dedup.eligibility`.
 
-Embeddings and Gold stay out of scope until chunk near-dedup is locked.
+Embeddings and Gold stay out of scope until explicitly started.

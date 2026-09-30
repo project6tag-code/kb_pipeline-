@@ -1,6 +1,6 @@
 # Chunk Near-Dedup V1: Candidate-Index Benchmark and Design
 
-Status: **the design is selected; production is not implemented.** This page records the benchmark and the chosen candidate-index design. Nothing here writes to PostgreSQL. Embeddings and Gold are not started.
+Status: **the design is selected and implemented** in `app/processing/chunk_dedup/` (see `docs/chunk_near_dedup_v1.md`). This page records the benchmark and the chosen candidate-index design. The production fact guard is stricter than the benchmark prototype: it is per-sentence and ordered, and adds direction and word-number checks. Nothing here writes to PostgreSQL. Embeddings and Gold are not started.
 
 - Benchmark: `scripts/benchmark_chunk_candidate_indexes.py`
 - Tests: `tests/unit/test_chunk_candidate_benchmark.py`

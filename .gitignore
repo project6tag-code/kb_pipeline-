@@ -42,3 +42,8 @@ data/silver/*
 !data/silver/.gitkeep
 data/quarantine/*
 !data/quarantine/.gitkeep
+# disposable chunk near-dedup candidate indexes (rebuildable from PostgreSQL)
+data/chunk_dedup/*
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

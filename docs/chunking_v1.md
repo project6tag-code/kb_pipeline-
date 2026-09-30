@@ -131,11 +131,11 @@ python -m app.processing.chunking.cli status --expect-database <db>
 - Refuses any database other than `--expect-database`.
 - Acquisition jobs never need resetting.
 
-## 8. Near-duplicate chunks (not in V1)
+## 8. Near-duplicate chunks
 
-Only exact chunk dedup is implemented. Document-level near-duplicates are already rejected in Silver (MinHash, J ≥ 0.8), which removes most near-duplicate chunks at the source.
+Chunking V1 does only exact chunk dedup. Document-level near-duplicates are already rejected in Silver (MinHash, J ≥ 0.8).
 
-Chunk-level near-dup is the extension point for the next phase. It would need its own benchmarked method, registered in `dedup_methods`. Where its decisions are stored needs design: `document_dedup_decisions` is document-keyed. Document MinHash parameters were not validated for ~250-token texts and are deliberately not reused.
+Chunk-level near-duplicates are handled by the separate stage **Global Chunk Near-Dedup V1** (`docs/chunk_near_dedup_v1.md`, Migration 001B). It never changes chunks or occurrences.
 
 ## 9. Known limits
 
