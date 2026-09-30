@@ -25,9 +25,13 @@ class _StubContext(types.ModuleType):
         self._offline = offline
         self.configure_calls: list[dict] = []
         self.events: list[str] = []
+        self.x_arguments = {"expect_database": "kb_pipeline_test"}
 
     def is_offline_mode(self) -> bool:
         return self._offline
+
+    def get_x_argument(self, as_dictionary: bool = False):
+        return self.x_arguments if as_dictionary else []
 
     def configure(self, **kwargs: object) -> None:
         self.events.append("configure")
@@ -83,8 +87,9 @@ class VersionTableTests(unittest.TestCase):
             def dispose(self):
                 order.append("dispose")
 
-        def fake_preflight(conn):
+        def fake_preflight(conn, *, expected_database):
             self.assertIs(conn, connection)
+            self.assertEqual(expected_database, "kb_pipeline_test")
             order.append("preflight")
 
         original_configure = context.configure
@@ -185,6 +190,18 @@ class PreflightTests(unittest.TestCase):
         connection = self.FakeConnection([True] * len(mc.PREFLIGHT_CHECKS))
         mc.run_preflight(connection)
         self.assertEqual(len(connection.executed), len(mc.PREFLIGHT_CHECKS))
+
+    def test_expected_database_is_checked_before_provisioning(self) -> None:
+        connection = self.FakeConnection(["kb_pipeline_test", *([True] * len(mc.PREFLIGHT_CHECKS))])
+        mc.run_preflight(connection, expected_database="kb_pipeline_test")
+        self.assertEqual(connection.executed[0], "SELECT current_database()")
+
+    def test_wrong_expected_database_refuses_before_other_checks(self) -> None:
+        connection = self.FakeConnection(["data_collection_pipeline"])
+        with self.assertRaises(mc.MigrationPreflightError) as ctx:
+            mc.run_preflight(connection, expected_database="kb_pipeline_test")
+        self.assertIn("expected 'kb_pipeline_test'", str(ctx.exception))
+        self.assertEqual(len(connection.executed), 1)
 
     def test_missing_schema_fails_first_with_clear_message(self) -> None:
         connection = self.FakeConnection([False])

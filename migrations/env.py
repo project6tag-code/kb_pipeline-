@@ -41,10 +41,15 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations as kb_pipeline_migrator after preflight checks."""
+    expected_database = context.get_x_argument(as_dictionary=True).get("expect_database", "").strip()
+    if not expected_database:
+        raise mc.MigrationPreflightError(
+            "online migrations require -x expect_database=<exact database name>"
+        )
     engine = mc.create_migration_engine(mc.get_migration_url())
     try:
         with engine.connect() as connection:
-            mc.run_preflight(connection)
+            mc.run_preflight(connection, expected_database=expected_database)
             # Alembic must own the migration transaction. Given a connection
             # that is already in a transaction, it would neither BEGIN nor
             # COMMIT, and closing the connection would roll the migration back.

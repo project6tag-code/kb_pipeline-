@@ -149,7 +149,7 @@ Thresholds: near-duplicate 0.80; VERSION (same URL or same repository path) 0.50
 python -m app.processing.silver.cli register-methods --expect-database <db>
 ```
 
-It is idempotent and verifies the frozen parameters. Before writing, it refuses unless the connection is on exactly `--expect-database`, as `kb_pipeline_migrator`, at revision `kbp_001a`. Until it has run, Silver persistence stops with `dedup_method_not_registered` (retried).
+It is idempotent and verifies the frozen parameters. Before writing, it refuses unless the connection is on exactly `--expect-database`, as `kb_pipeline_migrator`, at revision `kbp_001b`. Until it has run, Silver persistence stops with `dedup_method_not_registered` (retried).
 
 ## 7. Resource limits (`SilverConfig`)
 

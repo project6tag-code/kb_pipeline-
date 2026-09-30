@@ -26,6 +26,7 @@ READ_ONLY_ENTRY_SCRIPTS = (
     "pre_migration_snapshot.sql",
     "verify_kbp_provisioning.sql",
     "verify_migration_001a.sql",
+    "verify_migration_001b.sql",
     "verify_downgrade_001a.sql",
 )
 READ_ONLY_LIBS = ("lib/legacy_fingerprint.sql", "lib/legacy_checks.sql", "lib/finish.sql")
@@ -344,6 +345,25 @@ class MigrationVerificationScriptTests(unittest.TestCase):
         text = read("verify_downgrade_001a.sql")
         listed = re.findall(r"'(\w+)'", text.split("ARRAY[", 1)[1].split("]", 1)[0])
         self.assertEqual(listed, list(self.M.KBP_TABLES))
+
+
+class Migration001BVerificationScriptTests(unittest.TestCase):
+    TEXT = read("verify_migration_001b.sql")
+
+    def test_refuses_any_database_other_than_the_test_database(self) -> None:
+        self.assertIn("current_database() <> 'kb_pipeline_test'", self.TEXT)
+        self.assertIn("version_num = 'kbp_001b'", self.TEXT)
+
+    def test_verifies_schema_keys_fks_indexes_ownership_and_runtime_privileges(self) -> None:
+        for token in (
+            "expected_columns", "chunk_dedup_decisions_pkey", "chunk_relationships_pkey",
+            "chunk_dedup_decisions_representative_fkey", "chunk_relationships_pair_order_check",
+            "chunk_dedup_decisions_representative_idx", "chunk_relationships_related_idx",
+            "kb_pipeline_migrator", "kb_pipeline_app", "has_table_privilege",
+            "MIGRATION 001B VERIFICATION PASSED",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.TEXT)
 
 
 class LegacyMetricConsistencyTests(unittest.TestCase):

@@ -141,7 +141,7 @@ PREFLIGHT_CHECKS: Final[tuple[tuple[str, str, str], ...]] = (
 )
 
 
-def run_preflight(connection: Any) -> None:
+def run_preflight(connection: Any, *, expected_database: str | None = None) -> None:
     """Run read-only provisioning checks; raise on the first failure.
 
     Only catalog reads are performed; nothing is created or modified.
@@ -155,6 +155,14 @@ def run_preflight(connection: Any) -> None:
     from sqlalchemy import text
 
     try:
+        if expected_database is not None:
+            if not expected_database.strip():
+                raise MigrationPreflightError("expected database name must not be empty")
+            actual_database = connection.execute(text("SELECT current_database()")).scalar()
+            if actual_database != expected_database:
+                raise MigrationPreflightError(
+                    f"connected to database {actual_database!r}, expected {expected_database!r}"
+                )
         for description, sql, message in PREFLIGHT_CHECKS:
             result = connection.execute(text(sql)).scalar()
             if result is not True:

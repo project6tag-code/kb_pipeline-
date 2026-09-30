@@ -44,7 +44,7 @@ Any change produces a different name, and therefore a new version. Old occurrenc
 python -m app.processing.chunking.cli register-version --expect-database <db>
 ```
 
-It is idempotent and verifies the frozen parameters. It refuses unless the connection is exactly `--expect-database`, as `kb_pipeline_migrator`, at `kbp_001a`. Until it has run, chunking stops with `chunking_version_not_registered`, which is retried and never skipped.
+It is idempotent and verifies the frozen parameters. It refuses unless the connection is exactly `--expect-database`, as `kb_pipeline_migrator`, at `kbp_001b`. Until it has run, chunking stops with `chunking_version_not_registered`, which is retried and never skipped.
 
 ## 3. Tokenizer
 

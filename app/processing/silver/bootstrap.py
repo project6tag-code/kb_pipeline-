@@ -32,7 +32,7 @@ SELECT current_database() AS database, current_user AS role,
        (SELECT version_num FROM kbp.alembic_version) AS revision
 """
 EXPECTED_ROLE = "kb_pipeline_migrator"
-EXPECTED_REVISION = "kbp_001a"
+EXPECTED_REVISION = "kbp_001b"
 
 
 class BootstrapTargetError(RuntimeError):
@@ -40,7 +40,7 @@ class BootstrapTargetError(RuntimeError):
 
 
 def verify_target(conn: Any, expect_database: str) -> dict[str, Any]:
-    """Refuse unless connected to exactly ``expect_database`` as the migrator at revision kbp_001a."""
+    """Refuse unless connected to exactly ``expect_database`` as the migrator at revision kbp_001b."""
     from sqlalchemy import text
 
     row = dict(conn.execute(text(TARGET_SQL)).mappings().one())

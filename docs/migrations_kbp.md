@@ -1,10 +1,10 @@
-# kbp Migrations — Migration 001A and the Live Test Runbook
+# kbp Migrations — 001A Baseline and 001B Addendum
 
 | | |
 |---|---|
-| Status | **Prepared for review (Live Database Phase 1A). NOT executed against PostgreSQL.** No role, schema, grant or migration has been applied. |
+| Status | Migration 001A is the immutable baseline. Migration 001B is applied and validated on `kb_pipeline_test`; it passes offline safety/spec tests and the live target-guard, catalog, and privilege checks. |
 | Implements | `docs/database_schema_v1.md` (LOCKED) §5, §6, §21.1–21.2, §22–23; `docs/database_privileges_v1.md` (LOCKED) §3–§6, §8–§10, §13 |
-| Revision | `kbp_001a` (base of the isolated `kbp` lineage, branch label `kbp`) |
+| Revision | `kbp_001a` (base) → `kbp_001b` (chunk near-dedup addendum) |
 
 ---
 
@@ -16,6 +16,7 @@
 | `migrations/env.py` | Environment: version table `kbp.alembic_version`, autogenerate refused, `kbp`-only filters, online preflight | — |
 | `migrations/script.py.mako` | Template for future revisions (raw SQL via `op.execute`) | — |
 | `migrations/versions/kbp_001a_schema_v1.py` | **Migration 001A**: the 25 `kbp` tables, the approved FK, 8 indexes, runtime grants | DDL in `kbp` |
+| `migrations/versions/kbp_001b_chunk_near_dedup_v1.py` | **Migration 001B**: two additive chunk decision/relationship tables and runtime grants | DDL in `kbp` |
 | `app/db/migration_config.py` | Isolation constants, include filters, URL handling, read-only preflight checks | — |
 | `app/db/migration_safety.py` | Static safety checker (CLI: `python -m app.db.migration_safety`) | — |
 | `scripts/db/pre_migration_snapshot.sql` | Evidence snapshot of the legacy objects; prints the baseline lines | **read only** |
@@ -26,6 +27,7 @@
 | `scripts/db/permission_probes_app.sql` | Runtime permission tests, run as `kb_pipeline_app` (privileges §13 step 9) | no (probes touch no row; rolled back) |
 | `scripts/db/lib/*.sql` | Shared parts: legacy fingerprint, baseline comparison, final verdict | **read only** |
 | `tests/unit/test_migration_001a.py` | Migration vs locked specs (tables, columns, defaults, controlled lists, keys, FKs, indexes, grants, downgrade) | — |
+| `tests/unit/test_migration_001b.py` | Migration 001B keys, FKs, checks, indexes, grants, safety, and downgrade scope | — |
 | `tests/unit/test_migration_safety.py` | Checker rejects forbidden operations and allows the approved FK | — |
 | `tests/unit/test_alembic_env.py` | Version table, filters, env behaviour, preflight, secret hygiene | — |
 | `tests/unit/test_db_scripts.py` | The SQL scripts: read-only, no secrets, expected sets derived from the migration, provisioning grant set | — |
@@ -60,6 +62,9 @@
 - **Transactions:** `transaction_per_migration=True`. PostgreSQL DDL is
   transactional, so 001A is all-or-nothing. It sets `SET LOCAL lock_timeout =
   '5s'` and `statement_timeout = '60s'` (schema §23).
+- Every online Alembic command now requires `-x expect_database=<name>`;
+  `env.py` verifies `current_database()` before the migration transaction.
+  For this task, the only allowed target is `kb_pipeline_test`.
 - **Connection variables** (privileges §10, standardized in Phase 1A):
   `KB_MIGRATION_DATABASE_URL` (`kb_pipeline_migrator`, migrations and
   bootstrap only) and `KB_DATABASE_URL` (`kb_pipeline_app`, the application).
@@ -168,7 +173,18 @@ alembic upgrade kbp_001a --sql                    # render SQL only (needs alemb
 alembic downgrade kbp_001a:base --sql             # render downgrade SQL
 ```
 
+Migration 001B has its own offline design and safety record in
+`docs/chunk_near_dedup_v1.md`. The live 001B commands must use
+`-x expect_database=kb_pipeline_test`; they are not authorized for the legacy
+`data_collection_pipeline` database.
+
 ## 6. Live test runbook (Live Database Phase 1A) — NOT YET EXECUTED
+
+> Historical 001A instructions below include `data_collection_pipeline` as a
+> target. They are retained only as the original 001A runbook and MUST NOT be
+> used for this task. Migration 001B and its pilot are authorized only on
+> `kb_pipeline_test`. The current 001B status and guarded command are recorded
+> in `docs/chunk_near_dedup_v1.md`.
 
 **Where to run it.** First end to end on a **restored copy** (the scratch
 database created in step 1, e.g. `data_collection_pipeline_restorecheck`),

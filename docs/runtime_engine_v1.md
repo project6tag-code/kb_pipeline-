@@ -12,7 +12,7 @@
 | Module | Responsibility |
 |---|---|
 | `app/config/settings.py` | `DatabaseSettings` (URL from `KB_DATABASE_URL`, never printed; refuses the migration URL; bounded pool), `WorkerSettings` (lease, poll interval, batch size) |
-| `app/db/connection.py` | Bounded SQLAlchemy pool (`max_overflow=0`, pre-ping), session `TimeZone=UTC`, `application_name`; `Database.transaction()`; `health_check()` / `verify_runtime_identity()` (role `kb_pipeline_app`, not superuser, `kbp_001a`, UTC) |
+| `app/db/connection.py` | Bounded SQLAlchemy pool (`max_overflow=0`, pre-ping), session `TimeZone=UTC`, `application_name`; `Database.transaction()`; `health_check()` / `verify_runtime_identity()` (role `kb_pipeline_app`, not superuser, latest schema revision, UTC) |
 | `app/queue/states.py` | The schema's CHECK-list vocabularies (test-bound to Migration 001A) and the §17.4 transition table |
 | `app/queue/identity.py` | Deterministic `source_identifier` builders (schema §16.2) |
 | `app/queue/retry.py` | Retry controller: backoff, full jitter, Retry-After, reset timestamps, classification |

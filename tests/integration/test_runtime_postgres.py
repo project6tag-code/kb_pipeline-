@@ -46,7 +46,7 @@ class RuntimePostgresTests(unittest.TestCase):
         settings = DatabaseSettings(url=os.environ["KB_INTEGRATION_DATABASE_URL"], pool_size=4,
                                     application_name="kb_pipeline:integration_test")
         cls.db = Database.from_settings(settings)
-        cls.db.verify_runtime_identity()  # kb_pipeline_app, not superuser, kbp_001a, UTC
+        cls.db.verify_runtime_identity()  # kb_pipeline_app, not superuser, kbp_001b, UTC
         cls.queue = JobQueue(cls.db)
         cls.prefix = f"it-{uuid.uuid4().hex}/"
 

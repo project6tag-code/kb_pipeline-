@@ -483,3 +483,12 @@ These are not schema redesigns:
 - The bridge rows are never deleted by a `kbp` downgrade (section 3.2).
 - The Alembic environment verifies, rather than creates, schema `kbp`
   (section 3.2).
+
+## 15. Additive Migration 001B Privileges
+
+Migration 001B adds `kbp.chunk_dedup_decisions` and
+`kbp.chunk_relationships`, specified in `docs/chunk_near_dedup_v1.md`. The
+runtime role receives `SELECT` and `INSERT` on each table, and no `UPDATE`,
+`DELETE`, `TRUNCATE`, `REFERENCES`, or `TRIGGER`. This is an additive extension
+to the locked 001A privilege matrix; ownership remains with
+`kb_pipeline_migrator`.
