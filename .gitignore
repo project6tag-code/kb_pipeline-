@@ -42,6 +42,8 @@ data/silver/*
 !data/silver/.gitkeep
 data/quarantine/*
 !data/quarantine/.gitkeep
+# Gold bridge `status` snapshots written by operators at the repo root (generated local audit output)
+/bridge_*.json
 # disposable chunk near-dedup candidate indexes (rebuildable from PostgreSQL)
 data/chunk_dedup/*
 *.sqlite3

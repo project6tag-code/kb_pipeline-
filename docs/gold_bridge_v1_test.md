@@ -1,6 +1,6 @@
 # DCA_v2 V1 Gold Source Bridge — Development/Test Contract (kb_pipeline_test)
 
-Status: **implemented**. The read-only live verification passed. **Stage A (the admin step) still has to be executed by the operator.** Gold publication has not started.
+Status: **implemented and live-validated on `kb_pipeline_test` (2026-10-01)**. Gold publication has not started. The implementation is commit `997671f`; that commit message predates the Stage B validation, which passed afterwards (§9).
 
 Code: `app/processing/gold_bridge/` (`spec.py`, `bootstrap.py`, `cli.py`).
 
@@ -106,3 +106,18 @@ python -m app.processing.gold_bridge.cli resolve --expect-database kb_pipeline_t
 - **Test/development only.** Production needs the legacy compatibility review: the meaning of `KB_REFERENCE` to legacy consumers, the real legacy parents, and the legacy column set.
 - **Parent ids are local to this bridge.** Portable lookups must use `dataset_sources.name`.
 - **Stage A depends on the operator's admin credentials.**
+- **`status` output.** Redirected `status` output (for example `bridge_before.json`) is local audit output. It is git-ignored (`/bridge_*.json`) and never committed.
+
+## 9. Live validation record (kb_pipeline_test, 2026-10-01)
+
+| Step | Result |
+|---|---|
+| Stage A run 1 (operator, admin) | `dataset_sources` 0→2, `datasets` 0→2, map 0; all four rows `created` |
+| Stage A run 2 | all four `reused`; counts unchanged |
+| Stage A rows, re-read as migrator | exactly the §3 contract; no conflict rows |
+| Stage B run 1 (`kb_pipeline_migrator`) | map 0→2; `common_crawl` → `a7d8d2e1…`, `github` → `b487f559…`, both `created` |
+| Stage B run 2 | both `reused`; counts unchanged (2 / 2 / 2) |
+| provenance (`resolve`, runtime role) | CC chunk `0b124dba…` → document `050c3df7…` → observation `26ca9144…` → `common_crawl` → `a7d8d2e1…`; GitHub chunk `02e14bf2…` → document `00113948…` → observation `e7fae245…` → `github` → `b487f559…`; both equal the frozen ids |
+| privilege/schema fingerprint | `a5d032c9…` before Stage A, after Stage A and after Stage B: **identical** (owners, ACLs, columns, constraints of `public.datasets`, `dataset_sources`, `kb`, `metadata`, `kbp.source_dataset_map`) |
+| other state | Stage B changed only `kbp.source_dataset_map` (0→2). Chunks, occurrences, documents, observations, dedup decisions and relationships, the embedding model, results, vector hashes, queue, dead letters and the Stage A public rows all have identical content digests |
+| PostgreSQL test | guards and schema contract OK; Stage B rerun, resolution and unchanged fingerprint OK; the admin-stage test skips without `KB_ADMIN_DATABASE_URL` (Stage A was validated by the operator runs above) |
