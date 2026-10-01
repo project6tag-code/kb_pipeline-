@@ -492,3 +492,12 @@ runtime role receives `SELECT` and `INSERT` on each table, and no `UPDATE`,
 `DELETE`, `TRUNCATE`, `REFERENCES`, or `TRIGGER`. This is an additive extension
 to the locked 001A privilege matrix; ownership remains with
 `kb_pipeline_migrator`.
+
+## 16. Additive Migration 001C Privileges
+
+Migration 001C adds `kbp.chunk_embedding_vectors` (shadow embedding vectors,
+`docs/migration_001c_shadow_embedding_vectors.md`). The runtime role receives
+`SELECT` and `INSERT` only: a stored vector is never updated, deleted or
+truncated by the pipeline. Ownership remains with `kb_pipeline_migrator`. The
+column type `public.vector` is the only `public` object the migration names;
+it is a type reference, not a privilege on `public`.

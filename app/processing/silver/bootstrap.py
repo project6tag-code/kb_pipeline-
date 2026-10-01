@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.db.connection import EXPECTED_KBP_REVISION
 from app.processing.dedup import near
 
 REGISTER_METHOD_SQL = """
@@ -32,7 +33,7 @@ SELECT current_database() AS database, current_user AS role,
        (SELECT version_num FROM kbp.alembic_version) AS revision
 """
 EXPECTED_ROLE = "kb_pipeline_migrator"
-EXPECTED_REVISION = "kbp_001b"
+EXPECTED_REVISION = EXPECTED_KBP_REVISION  # one source of truth: the runtime's current kbp head
 
 
 class BootstrapTargetError(RuntimeError):
@@ -40,7 +41,7 @@ class BootstrapTargetError(RuntimeError):
 
 
 def verify_target(conn: Any, expect_database: str) -> dict[str, Any]:
-    """Refuse unless connected to exactly ``expect_database`` as the migrator at revision kbp_001b."""
+    """Refuse unless connected to exactly ``expect_database`` as the migrator at revision kbp_001c."""
     from sqlalchemy import text
 
     row = dict(conn.execute(text(TARGET_SQL)).mappings().one())

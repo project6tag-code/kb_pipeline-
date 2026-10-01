@@ -17,7 +17,7 @@ rerun-safe:
 * worker claims are restricted to these units (``source_identifier`` prefix).
 
 Local Bronze and the near-duplicate index live in ``data/silver/pilot`` (git-ignored).
-Refuses to run unless connected as kb_pipeline_app to exactly kb_pipeline_test at kbp_001b.
+Refuses to run unless connected as kb_pipeline_app to exactly kb_pipeline_test at kbp_001c.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def open_database(url: str | None = None):
     from sqlalchemy import text
 
     from app.config.settings import DatabaseSettings
-    from app.db.connection import Database
+    from app.db.connection import EXPECTED_KBP_REVISION, Database
     from tests.unit.test_migration_001a import MODULE as MIGRATION_001A
 
     url = url or os.environ.get("KB_INTEGRATION_DATABASE_URL", "")
@@ -77,12 +77,12 @@ def open_database(url: str | None = None):
             raise PilotRefused(f"connected to {name!r}; the Silver pilot only runs on {REQUIRED_DATABASE!r}")
         if role != REQUIRED_ROLE:
             raise PilotRefused(f"connected as {role!r}; the Silver pilot runs as {REQUIRED_ROLE}")
-        db.verify_runtime_identity()  # role, kbp revision kbp_001b, UTC
+        db.verify_runtime_identity()  # role, kbp revision kbp_001c, UTC
         with db.transaction() as conn:
             missing = [t for t in MIGRATION_001A.KBP_TABLES
                        if conn.execute(text("SELECT to_regclass(:t)"), {"t": f"kbp.{t}"}).scalar() is None]
             revision = conn.execute(text("SELECT version_num FROM kbp.alembic_version")).scalar_one()
-        if missing or revision != "kbp_001b":
+        if missing or revision != EXPECTED_KBP_REVISION:
             raise PilotRefused(f"kbp schema incomplete (missing {missing}, revision {revision!r})")
     except BaseException:
         db.dispose()

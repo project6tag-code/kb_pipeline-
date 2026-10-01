@@ -8,7 +8,9 @@ docs/database_privileges_v1.md) on the exact SQL a migration would execute:
   (lock_timeout, statement_timeout) / read-only DO guard blocks;
 * every DDL and GRANT/REVOKE target must be schema-qualified ``kbp.<name>``;
 * no reference to any schema other than ``kbp`` and ``pg_catalog``, except
-  the single allowlisted FK ``kbp.source_dataset_map -> public.datasets(id)``;
+  the single allowlisted FK ``kbp.source_dataset_map -> public.datasets(id)``
+  and the single allowlisted TYPE ``public.vector`` (pgvector; Migration 001C),
+  accepted only as a column type with a dimension in ``CREATE TABLE kbp.*``;
 * protected legacy objects (``public.kb``, ``public.metadata``,
   ``public.datasets``, ``public.dataset_sources``, ``public.alembic_version``)
   may not appear anywhere else, not even inside string literals;
@@ -55,6 +57,15 @@ ALLOWLISTED_CROSS_SCHEMA: Final[tuple[re.Pattern[str], ...]] = (
         r"foreign key \( ?dataset_id ?\) references public\.datasets \( ?id ?\)"
         r"(?: on (?:delete|update) no action)* not valid"
     ),
+)
+
+# The single approved foreign-schema TYPE (Migration 001C): pgvector's ``public.vector``,
+# and only as a column type with an integer dimension inside CREATE TABLE kbp.<name>.
+# Any other use (a function call, a cast, ALTER TABLE, DML, another public name) still fails.
+ALLOWED_PUBLIC_TYPES: Final[frozenset[str]] = frozenset({"public.vector"})
+_PUBLIC_TYPE_REFERENCE = re.compile(r"\bpublic\s*\.\s*vector\b")
+_PUBLIC_TYPE_COLUMN = re.compile(
+    r"(?:\(|,)\s*[a-z_][a-z0-9_$]*\s+public\.vector\s*\(\s*\d+\s*\)(?=\s*(?:not null\b|null\b|,|\)))"
 )
 
 _QUALIFIED_NAME = re.compile(r"\b([a-z_][a-z0-9_$]*)\s*\.\s*([a-z_][a-z0-9_$]*)\b")
@@ -201,6 +212,17 @@ def _target(kind: str, code: str) -> str | None:
     return match.group(1).replace(" ", "") if match else None
 
 
+def _allowed_public_type_uses(code: str) -> bool:
+    """True only if EVERY public.vector occurrence is a column type ``<col> public.vector(<int>)``
+    inside ``CREATE TABLE kbp.<name> (...)``."""
+    references = len(_PUBLIC_TYPE_REFERENCE.findall(code))
+    if references == 0:
+        return True
+    if _kind(code) != "create_table" or not (_target("create_table", code) or "").startswith("kbp."):
+        return False
+    return len(_PUBLIC_TYPE_COLUMN.findall(code)) == references
+
+
 def check_statement(sql: str, phase: str = "upgrade", index: int = 0) -> list[Violation]:
     """Return every rule violation found in one SQL statement."""
     violations: list[Violation] = []
@@ -236,11 +258,18 @@ def check_statement(sql: str, phase: str = "upgrade", index: int = 0) -> list[Vi
             if re.search(rf"\b{re.escape(obj)}\b", flat):
                 fail("protected-object", f"reference to protected legacy object {obj}")
 
-    # Rule: only kbp / pg_catalog schema-qualified names in executable code.
+    # Rule: only kbp / pg_catalog schema-qualified names in executable code, plus
+    # ALLOWED_PUBLIC_TYPES used strictly as column types of a new kbp table.
     if not allowlisted:
+        type_uses_ok = _allowed_public_type_uses(code)
         for schema, name in _QUALIFIED_NAME.findall(code):
-            if schema not in ALLOWED_SCHEMAS:
-                fail("foreign-schema", f"reference to {schema}.{name}; only kbp and pg_catalog are allowed")
+            if schema in ALLOWED_SCHEMAS:
+                continue
+            if f"{schema}.{name}" in ALLOWED_PUBLIC_TYPES and type_uses_ok:
+                continue
+            fail("foreign-schema", f"reference to {schema}.{name}; only kbp and pg_catalog are allowed"
+                 + (" (public.vector only as a column type in CREATE TABLE kbp.*)"
+                    if f"{schema}.{name}" in ALLOWED_PUBLIC_TYPES else ""))
 
     kind = _kind(code)
     if kind == "unknown":

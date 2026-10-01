@@ -1,10 +1,10 @@
-# kbp Migrations — 001A Baseline and 001B Addendum
+# kbp Migrations — 001A Baseline, 001B and 001C Addenda
 
 | | |
 |---|---|
-| Status | Migration 001A is the immutable baseline. Migration 001B is applied and validated on `kb_pipeline_test`; it passes offline safety/spec tests and the live target-guard, catalog, and privilege checks. |
+| Status | Migration 001A is the immutable baseline. Migrations 001B (chunk near-dedup) and 001C (shadow embedding vectors, `docs/migration_001c_shadow_embedding_vectors.md`) are applied and validated on `kb_pipeline_test`; each passes offline safety/spec tests and the live target-guard, catalog, and privilege checks. |
 | Implements | `docs/database_schema_v1.md` (LOCKED) §5, §6, §21.1–21.2, §22–23; `docs/database_privileges_v1.md` (LOCKED) §3–§6, §8–§10, §13 |
-| Revision | `kbp_001a` (base) → `kbp_001b` (chunk near-dedup addendum) |
+| Revision | `kbp_001a` (base) → `kbp_001b` (chunk near-dedup addendum) → `kbp_001c` (shadow embedding-vector storage) |
 
 ---
 
@@ -28,6 +28,9 @@
 | `scripts/db/lib/*.sql` | Shared parts: legacy fingerprint, baseline comparison, final verdict | **read only** |
 | `tests/unit/test_migration_001a.py` | Migration vs locked specs (tables, columns, defaults, controlled lists, keys, FKs, indexes, grants, downgrade) | — |
 | `tests/unit/test_migration_001b.py` | Migration 001B keys, FKs, checks, indexes, grants, safety, and downgrade scope | — |
+| `migrations/versions/kbp_001c_shadow_embedding_vectors.py` | **Migration 001C**: `kbp.chunk_embedding_vectors` (`public.vector(768)`, composite FK to `chunk_embeddings`), runtime SELECT/INSERT | DDL in `kbp` |
+| `scripts/db/verify_migration_001c.sql` | Read-only 001C catalog verifier (kb_pipeline_test only) | catalog reads |
+| `tests/unit/test_migration_001c.py` | Migration 001C schema, grants, downgrade scope, the narrow `public.vector` safety exception, verifier | — |
 | `tests/unit/test_migration_safety.py` | Checker rejects forbidden operations and allows the approved FK | — |
 | `tests/unit/test_alembic_env.py` | Version table, filters, env behaviour, preflight, secret hygiene | — |
 | `tests/unit/test_db_scripts.py` | The SQL scripts: read-only, no secrets, expected sets derived from the migration, provisioning grant set | — |

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **DATABASE SCHEMA V1 BASELINE — LOCKED.** Migration 001A (`migrations/versions/kbp_001a_schema_v1.py`) is the immutable baseline. The additive Migration 001B chunk-dedup schema is specified separately in `docs/chunk_near_dedup_v1.md`; it does not revise 001A or modify `public.*`. The Gold bridge bootstrap (§14.3) remains deferred because the semantics of `public.datasets.status` are unresolved (O-1 residual). |
+| Status | **DATABASE SCHEMA V1 BASELINE — LOCKED.** Migration 001A (`migrations/versions/kbp_001a_schema_v1.py`) is the immutable baseline. The additive Migration 001B chunk-dedup schema is specified separately in `docs/chunk_near_dedup_v1.md`, and the additive Migration 001C shadow embedding-vector table (§12.4 step 3 / O-18 storage) in `docs/migration_001c_shadow_embedding_vectors.md`; neither revises 001A or modifies `public.*`. The Gold bridge bootstrap (§14.3) remains deferred because the semantics of `public.datasets.status` are unresolved (O-1 residual). |
 | Target database | `data_collection_pipeline` (reused; no new database) |
 | Authority for existing-database facts | `docs/audits/database_audit_v1.csv` (general audit) and `docs/audits/database_compatibility_audit_v1.csv` (targeted compatibility audit). Both are read-only. |
 | Depends on | Identity Specification V1 (**LOCKED**): `app/utils/hashing.py`, `app/utils/ids.py`, `app/processing/normalization/text.py` |

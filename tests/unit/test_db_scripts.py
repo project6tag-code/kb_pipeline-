@@ -352,7 +352,7 @@ class Migration001BVerificationScriptTests(unittest.TestCase):
 
     def test_refuses_any_database_other_than_the_test_database(self) -> None:
         self.assertIn("current_database() <> 'kb_pipeline_test'", self.TEXT)
-        self.assertIn("version_num = 'kbp_001b'", self.TEXT)
+        self.assertIn("version_num IN ('kbp_001b', 'kbp_001c')", self.TEXT)
 
     def test_verifies_schema_keys_fks_indexes_ownership_and_runtime_privileges(self) -> None:
         for token in (
