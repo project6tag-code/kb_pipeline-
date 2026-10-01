@@ -1,0 +1,16 @@
+# Embeddings V1 (app/processing/embedding) — exact versions validated with the frozen model config.
+# Install into the project .venv only. torch comes from the CUDA 12.8 wheel index (Blackwell sm_120 support);
+# on a machine without a compatible GPU the same pins run on CPU (vector bits are device-class specific).
+#
+#   .venv/Scripts/python -m pip install -r requirements-embeddings.txt --extra-index-url https://download.pytorch.org/whl/cu128
+#
+# Changing any pin below requires a new EMBEDDING_VERSION (the registered config records them).
+torch==2.11.0+cu128
+sentence-transformers==6.1.0
+transformers==5.18.0
+tokenizers==0.23.2
+huggingface_hub==1.33.0
+safetensors==0.8.0
+numpy==2.5.3
+scipy==1.18.1
+scikit-learn==1.9.1

@@ -81,7 +81,7 @@ The runtime head moved to `kbp_001c`. `app.db.connection.EXPECTED_KBP_REVISION` 
 - `verify_migration_001b.sql` accepts `kbp_001b` or `kbp_001c`.
 - `verify_migration_001a.sql` remains the exact-001A-baseline verifier. After 001B and 001C, its M03–M08, M10 and M16 report only the additive 001B/001C objects; this was checked item by item.
 
-## 6. Future Embeddings V1 write transaction (contract; not implemented)
+## 6. Embeddings V1 write transaction (contract; implemented in `app/processing/embedding/service.py`, see `docs/embeddings_v1.md`)
 
 Per chunk, per batch, fenced by the queue lease. This mirrors §13.1 without Gold.
 
