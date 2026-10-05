@@ -109,20 +109,27 @@ def preflight_promotion(conn: Any, expect_database: str) -> dict[str, Any]:
             "embedding_model_id": MODEL_ID, "status": model_row["status"], "other_active_gold": active}
 
 
+def public_gold_counts(conn: Any, expect_database: str) -> dict[str, int]:
+    """Runtime-role precondition: public Gold tables are readable by kb_pipeline_app only."""
+    verify_target(conn, expect_database, role=RUNTIME_ROLE)
+    preflight_public_schema(conn)
+    return {"public_kb": int(conn.execute("SELECT count(*) AS count FROM public.kb").fetchone()["count"]),
+            "public_metadata": int(conn.execute("SELECT count(id) AS count FROM public.metadata").fetchone()["count"])}
+
+
 def promote_model(conn: Any, expect_database: str) -> dict[str, Any]:
     """Promote only the exact frozen model 2 row; caller supplies transaction."""
     checked = preflight_promotion(conn, expect_database)
     if checked["status"] == "active_gold":
         return {**checked, "action": "reused"}
-    preflight_public_schema(conn)
     method_id = resolve_method_id(conn)
     shadow = audit_shadow_state(conn, method_id, allowed_statuses={"candidate"})
     bridges = _validate_bridges(conn)
-    empty = {"gold_publications": int(conn.execute("SELECT count(*) AS count FROM kbp.gold_publications").fetchone()["count"]),
-             "public_kb": int(conn.execute("SELECT count(*) AS count FROM public.kb").fetchone()["count"]),
-             "public_metadata": int(conn.execute("SELECT count(id) AS count FROM public.metadata").fetchone()["count"])}
+    # The migrator cannot read public.kb/public.metadata; their emptiness is verified by the
+    # runtime role (public_gold_counts) before this call, so only the kbp ledger is checked here.
+    empty = {"gold_publications": int(conn.execute("SELECT count(*) AS count FROM kbp.gold_publications").fetchone()["count"])}
     if any(empty.values()):
-        raise GoldPublisherError(f"candidate model promotion requires empty Gold tables; found {empty}")
+        raise GoldPublisherError(f"candidate model promotion requires empty Gold ledger; found {empty}")
     updated = conn.execute(sql.PROMOTE_MODEL_SQL, (MODEL_ID,)).fetchone()
     row = read_model(conn)
     validate_model_row(row, allowed_statuses={"active_gold"})
@@ -277,7 +284,10 @@ def validate_vector_row(row: Mapping[str, Any] | None) -> tuple[str, bytes]:
     norm = math.sqrt(sum(value * value for value in values))
     if abs(norm - 1.0) > 1e-3 or abs(float(row["norm"]) - 1.0) > 1e-3:
         raise GoldPublisherError("shadow vector is not L2-normalized within the frozen tolerance")
-    return row["embedding_text"], recomputed
+    wire = bytes(row["vector_wire"])
+    if hashlib.sha256(wire[4:]).digest() != vector_hash:
+        raise GoldPublisherError("shadow vector wire bytes do not match the stored vector hash")
+    return row["embedding_text"], wire
 
 
 def _same_metadata(actual: Mapping[str, Any], expected: Mapping[str, Any], source_id: uuid.UUID) -> bool:
@@ -412,7 +422,7 @@ def _audit_gold(conn: Any, method_id: int) -> dict[str, Any]:
     ):
         raise GoldPublisherError("suppressed chunk/representative Gold resolution is inconsistent")
     row = _mapping(conn.execute(sql.GOLD_AUDIT_SQL, (method_id, MODEL_ID)).fetchone())
-    problems = {key: int(value) for key, value in row.items() if int(value) != 0}
+    problems = {key: int(value) for key, value in row.items() if key != "ledger_rows" and int(value) != 0}
     if problems:
         raise GoldPublisherError(f"Gold ledger/content audit failed: {problems}")
     source_counts = {record["source_type"]: int(record["rows"])

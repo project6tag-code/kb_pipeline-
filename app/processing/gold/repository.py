@@ -95,7 +95,7 @@ WHERE c.chunk_id = %s
 SHADOW_VECTOR_SQL = """
 SELECT e.status AS embedding_status, e.published_at AS embedding_published_at,
        v.embedding::text AS embedding_text, v.vector_sha256,
-       public.vector_dims(v.embedding) AS dimensions,
+       public.vector_dims(v.embedding) AS dimensions, public.vector_send(v.embedding) AS vector_wire,
        sha256(substring(public.vector_send(v.embedding) FROM 5)) AS recomputed_sha256,
        public.vector_norm(v.embedding) AS norm
 FROM kbp.chunk_embeddings e

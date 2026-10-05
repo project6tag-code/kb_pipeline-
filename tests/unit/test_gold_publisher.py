@@ -1,5 +1,6 @@
 """Focused pure-logic tests for Gold Publisher V1 guards and conflict policy."""
 
+import hashlib
 import math
 import unittest
 import uuid
@@ -47,10 +48,18 @@ class EligibilityTests(unittest.TestCase):
 
 
 class VectorAndProvenanceTests(unittest.TestCase):
+    WIRE = bytes([3, 0, 0, 0]) + b"vector-body"
+    DIGEST = hashlib.sha256(WIRE[4:]).digest()
+
     def valid_vector_row(self):
         return {"embedding_status": "stored_shadow", "embedding_published_at": None,
-                "embedding_text": "[1," + ",".join(["0"] * 767) + "]", "vector_sha256": b"x" * 32,
-                "recomputed_sha256": b"x" * 32, "dimensions": 768, "norm": 1.0}
+                "embedding_text": "[1," + ",".join(["0"] * 767) + "]", "vector_sha256": self.DIGEST,
+                "recomputed_sha256": self.DIGEST, "vector_wire": self.WIRE, "dimensions": 768, "norm": 1.0}
+
+    def test_valid_vector_returns_text_and_full_wire_bytes(self) -> None:
+        text, wire = service.validate_vector_row(self.valid_vector_row())
+        self.assertTrue(text.startswith("[1,"))
+        self.assertEqual(wire, self.WIRE)
 
     def test_missing_or_invalid_vector_is_refused(self) -> None:
         with self.assertRaises(service.GoldPublisherError):
@@ -58,6 +67,7 @@ class VectorAndProvenanceTests(unittest.TestCase):
         cases = (
             {"dimensions": 384},
             {"vector_sha256": b"y" * 32},
+            {"vector_wire": bytes([3, 0, 0, 0]) + b"tampered"},
             {"embedding_status": "published_gold"},
             {"embedding_text": "[NaN," + ",".join(["0"] * 767) + "]"},
             {"embedding_text": "[2," + ",".join(["0"] * 767) + "]", "norm": 2.0},

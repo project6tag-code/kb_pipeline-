@@ -37,9 +37,14 @@ def _connect(env_name: str, *, application_name: str):
 
 
 def cmd_promote(args: argparse.Namespace) -> int:
+    with _connect("KB_DATABASE_URL", application_name="kb_pipeline:gold_promote_precheck") as runtime:
+        public = service.public_gold_counts(runtime, args.expect_database)
+    if any(public.values()):
+        raise SystemExit(f"candidate model promotion requires empty public Gold tables; found {public}")
     with _connect("KB_MIGRATION_DATABASE_URL", application_name="kb_pipeline:gold_promote") as conn:
         with conn.transaction():
             result = service.promote_model(conn, args.expect_database)
+            result["public_gold_before"] = public
     print(json.dumps(result, indent=2, default=str))
     return 0
 
