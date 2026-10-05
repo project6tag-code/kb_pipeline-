@@ -106,6 +106,27 @@ class FakeDb:
         return copy.deepcopy((self.sources, self.datasets, self.map))
 
 
+class FakePsycopgResult:
+    def __init__(self, row):
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+class FakePsycopgConnection:
+    def __init__(self, row):
+        self.row = row
+        self.executed = []
+
+    def cursor(self):
+        return object()
+
+    def execute(self, sql, params):
+        self.executed.append((sql, params))
+        return FakePsycopgResult(self.row)
+
+
 def run_both(db: FakeDb) -> tuple[dict, dict]:
     db.role, db.superuser = "postgres", True
     admin = b.bootstrap_public(db, expect_database="kb_pipeline_test")
@@ -177,6 +198,12 @@ class GuardTests(unittest.TestCase):
     def test_stage_b_requires_stage_a(self) -> None:
         with self.assertRaises(b.BridgeRefused):
             b.bootstrap_map(FakeDb().as_migrator(), expect_database="kb_pipeline_test")
+
+    def test_locked_resolver_accepts_direct_psycopg_connection(self) -> None:
+        expected = spec.FROZEN_DATASET_IDS["common_crawl"]
+        conn = FakePsycopgConnection(("common_crawl", "common_crawl", "dataset-bridge:v1:common_crawl", expected))
+        self.assertEqual(b.resolve_dataset_id(conn, "common_crawl"), expected)
+        self.assertEqual(conn.executed[0][1], ("common_crawl",))
 
 
 class BootstrapTests(unittest.TestCase):

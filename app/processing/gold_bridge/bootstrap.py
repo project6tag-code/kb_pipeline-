@@ -286,7 +286,16 @@ def bootstrap_map(conn: Any, *, expect_database: str) -> dict:
 def resolve_dataset_id(conn: Any, source_channel: str) -> uuid.UUID:
     """Gold-side lookup: source channel -> bridge dataset id (refuses unknown channels and missing maps)."""
     spec.channel(source_channel)
-    row = conn.execute(_text(MAP_BY_CHANNEL_SQL), {"source_channel": source_channel}).one_or_none()
+    if hasattr(conn, "cursor") and not hasattr(conn, "exec_driver_sql"):
+        row = conn.execute(
+            "SELECT source_channel, dataset_source_name, bridge_identity_name, dataset_id "
+            "FROM kbp.source_dataset_map WHERE source_channel = %s",
+            (source_channel,),
+        ).fetchone()
+        if row is not None and hasattr(row, "keys"):
+            return row["dataset_id"]
+    else:
+        row = conn.execute(_text(MAP_BY_CHANNEL_SQL), {"source_channel": source_channel}).one_or_none()
     if row is None:
         raise BridgeRefused(f"no source_dataset_map row for {source_channel!r}: Gold publication is blocked")
     return row[3]

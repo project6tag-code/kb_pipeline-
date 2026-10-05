@@ -1,0 +1,1 @@
+"""Gold Publisher V1: copy verified shadow vectors and provenance into Gold atomically."""
