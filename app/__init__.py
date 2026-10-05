@@ -1,0 +1,3 @@
+from app._compat import ensure_sqlalchemy_importable as _ensure_sqlalchemy_importable
+
+_ensure_sqlalchemy_importable()

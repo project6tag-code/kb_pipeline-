@@ -4,6 +4,9 @@
     python -m app.processing.silver.cli register-methods --expect-database NAME
                                                                   # MIGRATOR ONLY: register the near-dup method
     python -m app.processing.silver.cli work --source cc|github   # acquisition worker with the Silver stage
+    python -m app.processing.silver.cli reprocess --expect-database NAME [--source cc|github|all]
+            [--force-reprocess] [--batch-size N] [--limit N] [--observation-id UUID]... [--crawl-id ID]
+            [--repository-id N]          # Silver over already-acquired observations (Bronze only, no network)
     python -m app.processing.silver.cli status                    # Silver counts (DB, read-only)
 
 ``register-methods`` uses KB_MIGRATION_DATABASE_URL (kb_pipeline_migrator) and refuses to write
@@ -48,6 +51,22 @@ def cmd_work(_config: SilverConfig, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reprocess(_config: SilverConfig, args: argparse.Namespace) -> int:
+    import uuid
+
+    from app.processing.silver.reprocess import ReprocessError, Scope, run_cli
+
+    try:
+        scope = Scope(source=args.source, force=args.force_reprocess, batch_size=args.batch_size, limit=args.limit,
+                      observation_ids=tuple(uuid.UUID(v) for v in args.observation_id or ()),
+                      crawl_id=args.crawl_id, repository_id=args.repository_id)
+        print(json.dumps(run_cli(args.expect_database, scope), indent=2, default=str))
+    except (ReprocessError, ValueError) as exc:
+        print(f"reprocess refused: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def cmd_status(_config: SilverConfig, _args: argparse.Namespace) -> int:
     from app.config.settings import DatabaseSettings
     from app.db.connection import Database
@@ -74,11 +93,21 @@ def main(argv: list[str] | None = None) -> int:
     work.add_argument("--source", choices=("cc", "github"), required=True)
     work.add_argument("--max-iterations", type=int, default=None)
     work.add_argument("--recover-every", type=int, default=10)
+    reprocess = sub.add_parser("reprocess")
+    reprocess.add_argument("--expect-database", required=True)
+    reprocess.add_argument("--source", choices=("cc", "github", "all"), default="all")
+    reprocess.add_argument("--force-reprocess", action="store_true",
+                           help="re-evaluate already-extracted observations and verify determinism (no duplicates)")
+    reprocess.add_argument("--batch-size", type=int, default=50)
+    reprocess.add_argument("--limit", type=int, default=None)
+    reprocess.add_argument("--observation-id", action="append")
+    reprocess.add_argument("--crawl-id")
+    reprocess.add_argument("--repository-id", type=int)
     sub.add_parser("status")
     args = parser.parse_args(argv)
     config = SilverConfig.from_env()
     handler = {"versions": cmd_versions, "register-methods": cmd_register_methods, "work": cmd_work,
-               "status": cmd_status}[args.command]
+               "reprocess": cmd_reprocess, "status": cmd_status}[args.command]
     return handler(config, args)
 
 

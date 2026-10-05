@@ -42,8 +42,10 @@ class ChunkingPostgresTests(unittest.TestCase):
         s = self.state
         self.assertEqual(s["invariant_problems"], [])  # offsets, hashes, ids, token counts, recomputed order
         self.assertEqual((s["chunking_versions_with_this_name"], s["chunk_registry_duplicate_hashes"],
-                          s["orphan_occurrences"], s["chunks_without_occurrence"], s["accepted_not_chunked"],
-                          s["chunking_dead_letters"]), (1, 0, 0, 0, 0, 0))
+                          s["orphan_occurrences"], s["chunks_without_occurrence"]), (1, 0, 0, 0))
+        # A database holding real data may contain accepted documents that legitimately yield no chunk; each one
+        # must be explained by exactly one chunking dead letter (none in a pilot-only database).
+        self.assertEqual(s["accepted_not_chunked"], s["chunking_dead_letters"])
         self.assertGreater(s["chunk_occurrences"], s["chunk_registry"] - 1)
         low, _avg, high = s["token_count_min_avg_max"]
         self.assertTrue(12 <= low and high <= 400)
@@ -91,7 +93,11 @@ class ChunkingPostgresTests(unittest.TestCase):
             finally:
                 conn.rollback()
         self.assertTrue(docs)
-        self.assertEqual([dict(r) for r in results], [{"chunk_document_already_chunked": 1}] * len(docs))
+        # chunk_rejected_* counters may accompany either outcome; only these two are the document outcomes.
+        already = sum("chunk_document_already_chunked" in r for r in results)
+        empty = sum("chunk_document_no_accepted_chunks" in r for r in results)
+        self.assertEqual(already + empty, len(docs))
+        self.assertEqual(empty, self.state["chunking_dead_letters"])
 
     def test_concurrent_insert_of_one_chunk_waits_and_never_duplicates(self) -> None:
         from sqlalchemy import text

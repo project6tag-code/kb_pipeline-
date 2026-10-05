@@ -40,28 +40,35 @@ class GoldPublicationSchemaPostgresTests(unittest.TestCase):
         with self.engine.connect() as connection:
             connection.exec_driver_sql("BEGIN")
             self._check_identity(connection)
-            self.assertEqual(connection.execute(text("SELECT count(*) FROM kbp.gold_publications")).scalar_one(), 0)
+            baseline = connection.execute(text("SELECT count(*) FROM kbp.gold_publications")).scalar_one()
             pair = connection.execute(text(
                 "SELECT e.chunk_id, e.embedding_model_id FROM kbp.chunk_embeddings e "
                 "WHERE e.status = 'stored_shadow' AND NOT EXISTS ("
                 "SELECT 1 FROM kbp.gold_publications p WHERE p.chunk_id = e.chunk_id "
                 "AND p.embedding_model_id = e.embedding_model_id) ORDER BY e.chunk_id LIMIT 1"
             )).one_or_none()
+            already_published = pair is None
+            if already_published:  # ledger already populated by a real publication: test uniqueness on a published pair
+                pair = connection.execute(text(
+                    "SELECT chunk_id, embedding_model_id FROM kbp.gold_publications ORDER BY chunk_id LIMIT 1"
+                )).one_or_none()
             run_id = connection.execute(text("SELECT run_id FROM kbp.pipeline_runs ORDER BY started_at LIMIT 1")) \
                 .scalar_one_or_none()
-            self.assertIsNotNone(pair, "expected an unpublished stored_shadow chunk/model pair")
+            self.assertIsNotNone(pair, "expected a stored_shadow or published chunk/model pair")
             self.assertIsNotNone(run_id, "expected a pipeline run for the run_id FK")
             params = {"chunk_id": pair[0], "embedding_model_id": pair[1],
                       "published_at": datetime.now(timezone.utc), "run_id": run_id}
-            connection.execute(text(
-                "INSERT INTO kbp.gold_publications (chunk_id, embedding_model_id, published_at, run_id) "
-                "VALUES (:chunk_id, :embedding_model_id, :published_at, :run_id)"
-            ), params)
+            if not already_published:
+                connection.execute(text(
+                    "INSERT INTO kbp.gold_publications (chunk_id, embedding_model_id, published_at, run_id) "
+                    "VALUES (:chunk_id, :embedding_model_id, :published_at, :run_id)"
+                ), params)
             selected = connection.execute(text(
                 "SELECT published_at, run_id FROM kbp.gold_publications "
                 "WHERE chunk_id = :chunk_id AND embedding_model_id = :embedding_model_id"
             ), params).one()
-            self.assertEqual(selected[1], run_id)
+            if not already_published:
+                self.assertEqual(selected[1], run_id)
 
             savepoint = connection.begin_nested()
             with self.assertRaises(IntegrityError) as ctx:
@@ -75,7 +82,7 @@ class GoldPublicationSchemaPostgresTests(unittest.TestCase):
 
         with self.engine.connect() as connection:
             self._check_identity(connection)
-            self.assertEqual(connection.execute(text("SELECT count(*) FROM kbp.gold_publications")).scalar_one(), 0)
+            self.assertEqual(connection.execute(text("SELECT count(*) FROM kbp.gold_publications")).scalar_one(), baseline)
 
     def test_runtime_update_delete_truncate_are_denied(self) -> None:
         from sqlalchemy import text
