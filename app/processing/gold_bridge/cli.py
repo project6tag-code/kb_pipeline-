@@ -6,6 +6,8 @@
         STAGE A, ADMIN ONLY (KB_ADMIN_DATABASE_URL: a superuser or the owner of the public tables; the
         operator's own credentials, e.g. via their pgpass/PGPASSWORD; never stored by the pipeline):
         create/reuse public.dataset_sources (common_crawl, github) and public.datasets (frozen bridge ids)
+    python -m app.processing.gold_bridge.cli metadata-patch --expect-database kb_pipeline_test
+        ADMIN ONLY (KB_ADMIN_DATABASE_URL): add the five audited nullable Gold provenance columns
     python -m app.processing.gold_bridge.cli map-bootstrap --expect-database kb_pipeline_test
         STAGE B, MIGRATOR (KB_MIGRATION_DATABASE_URL): verify Stage A, create/reuse kbp.source_dataset_map
     python -m app.processing.gold_bridge.cli status --expect-database kb_pipeline_test
@@ -95,6 +97,12 @@ def cmd_admin(args) -> int:
     return _run_stage("KB_ADMIN_DATABASE_URL", bootstrap_public, args.expect_database)
 
 
+def cmd_metadata_patch(args) -> int:
+    from app.processing.gold_bridge.metadata_patch import patch_metadata
+
+    return _run_stage("KB_ADMIN_DATABASE_URL", patch_metadata, args.expect_database)
+
+
 def cmd_map(args) -> int:
     from app.processing.gold_bridge.bootstrap import bootstrap_map
 
@@ -164,12 +172,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.processing.gold_bridge.cli")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("plan")
-    for name in ("admin-bootstrap", "map-bootstrap", "status", "resolve"):
+    for name in ("admin-bootstrap", "metadata-patch", "map-bootstrap", "status", "resolve"):
         sub.add_parser(name).add_argument("--expect-database", required=True,
                                           help="must be exactly kb_pipeline_test (the only authorized target)")
     args = parser.parse_args(argv)
-    return {"plan": cmd_plan, "admin-bootstrap": cmd_admin, "map-bootstrap": cmd_map, "status": cmd_status,
-            "resolve": cmd_resolve}[args.command](args)
+    return {"plan": cmd_plan, "admin-bootstrap": cmd_admin, "metadata-patch": cmd_metadata_patch,
+            "map-bootstrap": cmd_map, "status": cmd_status, "resolve": cmd_resolve}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ Both stages refuse to write unless all of the following hold:
 * ``current_database()`` equals ``--expect-database`` AND is authorized for
   this V1 test bridge (``kb_pipeline_test`` only);
 * ``data_collection_pipeline`` is never accepted;
-* the kbp revision is ``kbp_001c``;
+* the kbp revision is ``kbp_001d``;
 * the expected role is connected;
 * the public tables match the verified 5-column stub contract exactly
   (columns, types, nullability, no defaults, constraints, no triggers).

@@ -4,7 +4,7 @@
 is an idempotent operator step run with KB_MIGRATION_DATABASE_URL
 (``kb_pipeline_migrator``). It is refused unless the connection is on exactly
 ``--expect-database``, as the migrator, at the current kbp revision
-(``kbp_001c``).
+(``kbp_001d``).
 
 The row is registered as ``candidate`` (schema §12.4 step 1): never
 ``active_gold``, and Gold is not started. An existing row with a different

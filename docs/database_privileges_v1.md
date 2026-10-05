@@ -501,3 +501,12 @@ Migration 001C adds `kbp.chunk_embedding_vectors` (shadow embedding vectors,
 truncated by the pipeline. Ownership remains with `kb_pipeline_migrator`. The
 column type `public.vector` is the only `public` object the migration names;
 it is a type reference, not a privilege on `public`.
+
+## 17. Additive Migration 001D Privileges
+
+Migration 001D adds `kbp.gold_publications` (the successful-publication
+ledger). `kb_pipeline_app` receives `SELECT` and `INSERT` only. It receives no
+`UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES`, `TRIGGER`, or DDL privilege.
+`kb_pipeline_migrator` remains the owner of the table. The separate
+`public.metadata` column patch is executed only by an operator superuser/table
+owner and changes no grants or ownership.

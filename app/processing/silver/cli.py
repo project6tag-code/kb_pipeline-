@@ -7,7 +7,7 @@
     python -m app.processing.silver.cli status                    # Silver counts (DB, read-only)
 
 ``register-methods`` uses KB_MIGRATION_DATABASE_URL (kb_pipeline_migrator) and refuses to write
-unless the connected database is exactly ``--expect-database`` at revision kbp_001c;
+unless the connected database is exactly ``--expect-database`` at revision kbp_001d;
 the other database commands use KB_DATABASE_URL (kb_pipeline_app).
 """
 

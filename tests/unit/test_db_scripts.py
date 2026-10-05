@@ -27,6 +27,8 @@ READ_ONLY_ENTRY_SCRIPTS = (
     "verify_kbp_provisioning.sql",
     "verify_migration_001a.sql",
     "verify_migration_001b.sql",
+    "verify_migration_001d.sql",
+    "verify_gold_metadata.sql",
     "verify_downgrade_001a.sql",
 )
 READ_ONLY_LIBS = ("lib/legacy_fingerprint.sql", "lib/legacy_checks.sql", "lib/finish.sql")
@@ -215,6 +217,7 @@ class ReadOnlyTests(unittest.TestCase):
                         code,
                         r"^(begin isolation level repeatable read read only|rollback"
                         r"|set local (lock_timeout|statement_timeout) = ''|set local client_min_messages = notice"
+                        r"|set local search_path = pg_catalog, public"
                         r"|select |with |do \$\$)",
                         statement[:120],
                     )
@@ -352,7 +355,7 @@ class Migration001BVerificationScriptTests(unittest.TestCase):
 
     def test_refuses_any_database_other_than_the_test_database(self) -> None:
         self.assertIn("current_database() <> 'kb_pipeline_test'", self.TEXT)
-        self.assertIn("version_num IN ('kbp_001b', 'kbp_001c')", self.TEXT)
+        self.assertIn("version_num IN ('kbp_001b', 'kbp_001c', 'kbp_001d')", self.TEXT)
 
     def test_verifies_schema_keys_fks_indexes_ownership_and_runtime_privileges(self) -> None:
         for token in (
@@ -364,6 +367,38 @@ class Migration001BVerificationScriptTests(unittest.TestCase):
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.TEXT)
+
+
+class GoldSchemaVerificationScriptTests(unittest.TestCase):
+    MIGRATION = read("verify_migration_001d.sql")
+    METADATA = read("verify_gold_metadata.sql")
+
+    def test_migration_verifier_is_targeted_read_only_and_checks_revision(self) -> None:
+        self.assertIn("current_database() <> 'kb_pipeline_test'", self.MIGRATION)
+        self.assertIn("version_num = 'kbp_001d'", self.MIGRATION)
+        self.assertIn("gold_publications", self.MIGRATION)
+        self.assertTrue(self.MIGRATION.rstrip().endswith("ROLLBACK;"))
+
+    def test_migration_verifier_checks_ledger_contract_and_privileges(self) -> None:
+        for token in (
+            "kbp.gold_publications", "gold_publications_pkey", "gold_publications_embedding_fkey",
+            "gold_publications_run_fkey", "kbp.chunk_embeddings", "kbp.pipeline_runs",
+            "has_table_privilege", "MIGRATION 001D VERIFICATION PASSED",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.MIGRATION)
+
+    def test_metadata_verifier_is_targeted_and_checks_exact_appended_schema(self) -> None:
+        for token in (
+            "current_database() <> 'kb_pipeline_test'", "version_num = 'kbp_001d'",
+            "source_url:text:false:false", "source_title:text:false:false",
+            "source_type:character varying(50):false:false", "published_at:timestamp with time zone:false:false",
+            "updated_at:timestamp with time zone:false:false", "metadata_pkey", "metadata_source_id_fkey",
+            "relacl::text", "GOLD METADATA VERIFICATION PASSED",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.METADATA)
+        self.assertTrue(self.METADATA.rstrip().endswith("ROLLBACK;"))
 
 
 class LegacyMetricConsistencyTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 # Embeddings V1 — Local MPNet Shadow Embeddings
 
-Status: **implemented and validated on `kb_pipeline_test`** at `kbp_001c`.
+Status: **implemented and validated on `kb_pipeline_test`** at `kbp_001c`. Migration 001D later advanced the schema head without changing embedding rows or configuration; current database readiness requires `kbp_001d`.
 
 - The vectors are stored as **shadow** embeddings (`kbp.chunk_embedding_vectors`, Migration 001C).
 - Gold is **not** started: nothing is written to `public.kb` or `public.metadata`, and no model is `active_gold`.
@@ -102,7 +102,7 @@ python -m app.processing.embedding.cli status  --expect-database kb_pipeline_tes
 python -m app.processing.embedding.cli verify  --expect-database kb_pipeline_test [--sample N] [--device cuda]
 ```
 
-Every database command refuses any database other than `--expect-database`. `register-model` must run as `kb_pipeline_migrator` at `kbp_001c`.
+Every database command refuses any database other than `--expect-database`. `register-model` must run as `kb_pipeline_migrator` at the current head, `kbp_001d`.
 
 ## 8. Pilot results (kb_pipeline_test)
 

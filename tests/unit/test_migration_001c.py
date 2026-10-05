@@ -20,7 +20,7 @@ VERIFIER = (ROOT / "scripts" / "db" / "verify_migration_001c.sql").read_text(enc
 class LineageTests(unittest.TestCase):
     def test_revision_chain_and_runtime_head(self) -> None:
         self.assertEqual((MODULE.revision, MODULE.down_revision), ("kbp_001c", "kbp_001b"))
-        self.assertEqual(connection.EXPECTED_KBP_REVISION, "kbp_001c")
+        self.assertEqual(connection.EXPECTED_KBP_REVISION, "kbp_001d")
 
     def test_creates_exactly_one_kbp_table_and_nothing_else(self) -> None:
         kinds = [s.strip().split()[0] + " " + s.strip().split()[1] for s in UPGRADE]

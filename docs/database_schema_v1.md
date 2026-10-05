@@ -1219,8 +1219,8 @@ Re-running any step is a no-op because of the PKs.
 
 ```
 -- outside the transaction
-claim embedding_queue rows for the active_gold model (FOR UPDATE SKIP LOCKED, set lease)
-read chunk_registry.chunk_text / chunk_hash ; compute embeddings
+read the exact stored_shadow result + chunk_embedding_vectors row for the model
+verify the vector hash against the database's canonical vector bytes
 pre-check legacy collisions via legacy_kb_reconciliation(canonical_chunk_hash)       (15.2)
 
 BEGIN
@@ -1231,19 +1231,18 @@ BEGIN
                             source_type, domain, published_at, updated_at=NULL)
          ON CONFLICT (id) DO NOTHING
     if 0 rows inserted -> VERIFY existing metadata row (13.2)
- 3. INSERT public.kb (id=chunk_id, chunk=chunk_registry.chunk_text, embedding)
+ 3. INSERT public.kb (id=chunk_id, chunk=chunk_registry.chunk_text, embedding=shadow vector)
          ON CONFLICT (id) DO NOTHING
     if 0 rows inserted -> VERIFY existing kb row (13.2)
- 4. INSERT kbp.chunk_embeddings (chunk_id, model, 'published_gold', attempt_count, embedded_at,
-                                 published_at, run_id)  ON CONFLICT (chunk_id, embedding_model_id) DO NOTHING
-    DELETE kbp.embedding_queue WHERE chunk_id = ? AND embedding_model_id = ? AND lease_token = :token
-         -- 0 rows => lease lost => ROLLBACK
+ 4. INSERT kbp.gold_publications (chunk_id, embedding_model_id, published_at, run_id)
+      ON CONFLICT (chunk_id, embedding_model_id) DO NOTHING
+    if 0 rows inserted -> VERIFY the existing publication ledger row
 COMMIT
 ```
 
-- **Conflict targets:** `public.metadata (id)`, `public.kb (id)` (both
-  existing primary keys), and `kbp.chunk_embeddings (chunk_id,
-  embedding_model_id)`.
+- **Conflict targets:** `public.metadata (id)`, `public.kb (id)`, and
+  `kbp.gold_publications (chunk_id, embedding_model_id)`. The publication
+  ledger is separate from embedding result state.
 - **No `DO UPDATE` is ever used on `public.metadata` or `public.kb`.**
 
 ### 13.2 Conflict verification (no destructive overwrite)
@@ -1254,7 +1253,8 @@ the row is **compared, never overwritten**:
 | Existing row | Compatible if | Otherwise |
 |---|---|---|
 | `metadata(id = chunk_id)` | `source_id` is one of the two bridge `dataset_id`s in `kbp.source_dataset_map` (it is a pipeline-owned row). Other representative fields may differ; they stay as first written (insert-once, D16). | ROLLBACK the item; `dead_letters(item_type='chunk', stage='STORED', error_class='data_invalid', error_code='gold_metadata_conflict', disposition='quarantined')` |
-| `kb(id = chunk_id)` | `sha256(convert_to(kb.chunk,'UTF8')) = chunk_registry.chunk_hash` **and** `kb.embedding IS NOT NULL`. If `kbp.chunk_embeddings` already has a `published_gold` row for this model, the retry is a no-op success. If there is no such row, this transaction cannot have written the existing `kb` row (both commit atomically). The existing row is then **kept unchanged** and flagged for review (`dead_letters`, `error_code='gold_unattributed_row'`). | ROLLBACK the item; dead letter with `error_code='gold_kb_conflict'`, `disposition='quarantined'` |
+| `kb(id = chunk_id)` | `sha256(convert_to(kb.chunk,'UTF8')) = chunk_registry.chunk_hash` **and** `kb.embedding` matches the verified stored-shadow vector. A retry is a no-op only when the matching `gold_publications` pair also exists. An unmatched existing row is kept unchanged and flagged for review. | ROLLBACK the item; dead letter with `error_code='gold_kb_conflict'`, `disposition='quarantined'` |
+| `gold_publications(chunk_id, embedding_model_id)` | The matching metadata row and KB row exist and the KB vector matches the immutable shadow vector/hash. | ROLLBACK the item; publication-ledger/content mismatch is quarantined for review |
 
 A conflicting row can only come from a bug or an external writer, because
 `chunk_id` is UUIDv5 over the content hash and legacy ids are not in this
@@ -1267,17 +1267,25 @@ replaced.
   deferrable** (A2).
 - The pipeline never deletes `metadata` or `kb` rows (L21), because
   `kb_id_fkey` is `ON DELETE CASCADE`.
+- `chunk_embeddings` remains the embedding-generation state (`stored_shadow`);
+  `chunk_embedding_vectors` remains the immutable vector and hash;
+  `gold_publications` records only successful publication. `chunk_embeddings`
+  status is never changed to represent Gold publication.
+- A chunk is successfully published only when `public.metadata` and
+  `public.kb` exist, the KB vector matches the stored shadow vector/hash, and
+  the exact `gold_publications` pair exists.
 - If a legacy or external process deletes a new-pipeline `metadata` row, its
   `kb` row disappears with it. A periodic **Gold drift audit** compares
-  `chunk_embeddings(status='published_gold')` with `public.kb` and re-enqueues
-  missing chunks through `embedding_enqueue`.
+  `gold_publications` with both public tables and schedules missing Gold rows
+  for review/republication. The publisher/work scheduling path is not part of
+  this schema task.
 - New-pipeline `kb.chunk` is byte-identical to `chunk_registry.chunk_text`
   (verifiable: `sha256(kb.chunk) = chunk_hash`).
 - New-pipeline Gold rows always have a non-NULL embedding: no
   NULL-then-UPDATE.
 - A kb row is new-pipeline exactly when `kb.id` ∈ `kbp.chunk_registry`.
-- If a lease is lost, the fenced `DELETE` affects 0 rows. The transaction
-  aborts and all its inserts roll back.
+- The schema migration adds no publication queue or new job type. A future
+  publisher must make metadata, KB content, and the ledger atomic.
 - Legacy collision handling happens **before** publication (section 15.2).
 
 ---

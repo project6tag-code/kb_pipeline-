@@ -271,7 +271,7 @@ class GuardTests(unittest.TestCase):
         from app.processing.silver.bootstrap import BootstrapTargetError
 
         good = {"database": "kb_pipeline_test", "role": "kb_pipeline_migrator", "has_table": True,
-                "revision": "kbp_001c"}
+                "revision": "kbp_001d"}
         for change in ({"database": "data_collection_pipeline"}, {"role": "kb_pipeline_app"},
                        {"revision": "kbp_001b"}):
             with self.subTest(change), self.assertRaises(BootstrapTargetError):

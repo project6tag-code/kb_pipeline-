@@ -45,8 +45,8 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'schema kbp is missing or not owned by kb_pipeline_migrator';
     END IF;
-    -- 001B objects are verified at kbp_001b or any later revision that keeps them (kbp_001c).
-    IF (SELECT count(*) FROM kbp.alembic_version WHERE version_num IN ('kbp_001b', 'kbp_001c')) <> 1 THEN
+    -- 001B objects are verified at kbp_001b or any later revision that keeps them.
+    IF (SELECT count(*) FROM kbp.alembic_version WHERE version_num IN ('kbp_001b', 'kbp_001c', 'kbp_001d')) <> 1 THEN
         RAISE EXCEPTION 'kbp.alembic_version is not kbp_001b or a later revision that includes it';
     END IF;
 

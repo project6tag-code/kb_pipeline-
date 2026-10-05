@@ -28,7 +28,7 @@ from app.utils.ids import DATASET_BRIDGE_PREFIX, KB_NAMESPACE, make_dataset_brid
 
 ALLOWED_DATABASES = frozenset({"kb_pipeline_test"})  # authorized targets for this V1 test bridge
 FORBIDDEN_DATABASES = frozenset({"data_collection_pipeline"})
-EXPECTED_REVISION = "kbp_001c"
+EXPECTED_REVISION = "kbp_001d"
 STATUS_KB_REFERENCE = "KB_REFERENCE"
 LEGACY_WORKFLOW_STATUSES = frozenset({"ACCEPTED", "DISCOVERED", "REJECTED"})  # never used for bridge rows
 DATASET_SOURCE_PREFIX = "dataset-source:v1:"

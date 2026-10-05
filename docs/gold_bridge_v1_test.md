@@ -65,7 +65,7 @@ Any other channel is refused, by `spec.channel()` and by the table's own CHECK.
 Before any write, both stages verify:
 
 - `current_database()` equals `--expect-database`, which must be `kb_pipeline_test` (`data_collection_pipeline` is always refused);
-- the kbp revision is `kbp_001c`;
+- the kbp revision is the current head, `kbp_001d` (the bridge rows were live-validated at `kbp_001c` and are unchanged by 001D);
 - the expected role is connected;
 - the public schema matches **exactly**: columns, types, NOT NULL, no defaults or identity, the four constraints, no triggers.
 

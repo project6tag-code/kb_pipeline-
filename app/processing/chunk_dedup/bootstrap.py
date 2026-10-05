@@ -3,7 +3,7 @@
 ``kb_pipeline_app`` has SELECT only on ``kbp.dedup_methods``, so registration
 is an idempotent operator step run with KB_MIGRATION_DATABASE_URL
 (``kb_pipeline_migrator``). It is refused unless the connection is on exactly
-``--expect-database``, as the migrator, at revision kbp_001c. An existing row
+``--expect-database``, as the migrator, at revision kbp_001d. An existing row
 with different frozen parameters is refused, never overwritten: a changed
 parameter must be a new version.
 """
