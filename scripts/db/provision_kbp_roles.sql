@@ -240,7 +240,8 @@ GRANT SELECT ON TABLE public.dataset_sources TO kb_pipeline_migrator;
 -- -----------------------------------------------------------------------------
 GRANT SELECT (id, name, source_type) ON TABLE public.dataset_sources TO kb_pipeline_app;
 GRANT SELECT (id, source_id, dataset_name, metadata) ON TABLE public.datasets TO kb_pipeline_app;
-GRANT SELECT (id, source_id) ON TABLE public.metadata TO kb_pipeline_app;
+GRANT SELECT (id, source_id, source_url, source_title, source_type, domain, published_at, updated_at)
+    ON TABLE public.metadata TO kb_pipeline_app;
 GRANT INSERT ON TABLE public.metadata TO kb_pipeline_app;
 GRANT SELECT, INSERT ON TABLE public.kb TO kb_pipeline_app;
 

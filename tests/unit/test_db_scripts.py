@@ -468,7 +468,7 @@ class LegacyMetricConsistencyTests(unittest.TestCase):
         block = read("lib/legacy_checks.sql").split("-- BEGIN APPROVED PROVISIONING ACL", 1)[1]
         approved = set(re.findall(r"\('([^']+)'\)", block.split("-- END APPROVED PROVISIONING ACL", 1)[0]))
         self.assertEqual(approved, derived)
-        self.assertEqual(len(approved), 15)
+        self.assertEqual(len(approved), 21)
         self.assertFalse(any("|INSERT|" in k and k.startswith(("public.datasets|", "public.dataset_sources|"))
                              for k in approved))
 
@@ -523,7 +523,7 @@ class PermissionProbeTests(unittest.TestCase):
         self.assertNotRegex(lex(sql_only(self.TEXT)).code, r"\bcommit\b")
 
     def test_probes_cannot_touch_rows(self) -> None:
-        self.assertEqual(len(self.PROBES_FOUND), 30)
+        self.assertEqual(len(self.PROBES_FOUND), 29)
         for probe_id, _expectation, statement in self.PROBES_FOUND:
             flat = " ".join(statement.split())
             with self.subTest(probe=probe_id):
@@ -562,6 +562,20 @@ class PermissionProbeTests(unittest.TestCase):
                           "UPDATE public.metadata SET domain = domain WHERE false",
                           "DELETE FROM public.metadata WHERE false"):
             self.assertIn(statement, denied)
+
+    def test_metadata_conflict_verification_selects_all_eight_columns(self) -> None:
+        allowed = {" ".join(s.split()) for _i, e, s in self.PROBES_FOUND if e == "allowed"}
+        self.assertIn(
+            "SELECT id, source_id, source_url, source_title, source_type, domain, published_at, updated_at "
+            "FROM public.metadata LIMIT 0",
+            allowed,
+        )
+        for column in ("id", "source_id", "source_url", "source_title", "source_type", "domain",
+                       "published_at", "updated_at"):
+            self.assertIn(f"has_column_privilege(current_user, 'public.metadata', '{column}', 'SELECT')", self.TEXT)
+        self.assertIn("NOT has_table_privilege(current_user, 'public.metadata', 'UPDATE')", self.TEXT)
+        self.assertIn("NOT has_table_privilege(current_user, 'public.metadata', 'DELETE')", self.TEXT)
+        self.assertIn("NOT has_table_privilege(current_user, 'public.metadata', 'TRUNCATE')", self.TEXT)
 
 
 class ProvisioningScriptTests(unittest.TestCase):
@@ -609,7 +623,8 @@ class ProvisioningScriptTests(unittest.TestCase):
             "GRANT SELECT ON TABLE public.dataset_sources TO kb_pipeline_migrator",
             "GRANT SELECT (id, name, source_type) ON TABLE public.dataset_sources TO kb_pipeline_app",
             "GRANT SELECT (id, source_id, dataset_name, metadata) ON TABLE public.datasets TO kb_pipeline_app",
-            "GRANT SELECT (id, source_id) ON TABLE public.metadata TO kb_pipeline_app",
+            "GRANT SELECT (id, source_id, source_url, source_title, source_type, domain, published_at, updated_at) "
+            "ON TABLE public.metadata TO kb_pipeline_app",
             "GRANT INSERT ON TABLE public.metadata TO kb_pipeline_app",
             "GRANT SELECT, INSERT ON TABLE public.kb TO kb_pipeline_app",
             "GRANT USAGE ON SCHEMA kbp TO kb_pipeline_app",
@@ -618,7 +633,8 @@ class ProvisioningScriptTests(unittest.TestCase):
     def test_runtime_public_grants_are_those_of_privileges_section_6(self) -> None:
         section = PRIVILEGES_DOC.split("## 6. `public` table privileges (runtime)", 1)[1].split("## 7.", 1)[0]
         for fragment in ("`SELECT (id, name, source_type)`", "`SELECT (id, source_id, dataset_name, metadata)`",
-                         "`SELECT (id, source_id)`, `INSERT` (all columns)", "| `public.kb` | `SELECT`, `INSERT` |"):
+                         "`SELECT (id, source_id, source_url, source_title, source_type, domain, published_at, updated_at)`, "
+                         "`INSERT` (all columns)", "| `public.kb` | `SELECT`, `INSERT` |"):
             self.assertIn(fragment, section)
 
     def test_no_escalation_or_forbidden_privilege(self) -> None:

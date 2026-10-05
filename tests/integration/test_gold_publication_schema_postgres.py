@@ -95,6 +95,56 @@ class GoldPublicationSchemaPostgresTests(unittest.TestCase):
                 self.assertEqual(getattr(ctx.exception.orig, "sqlstate", None), "42501")
                 connection.rollback()
 
+    def test_runtime_metadata_conflict_verification_privileges(self) -> None:
+        from sqlalchemy import text
+
+        metadata_columns = ("id", "source_id", "source_url", "source_title", "source_type", "domain",
+                            "published_at", "updated_at")
+        with self.engine.connect() as connection:
+            connection.exec_driver_sql("BEGIN READ ONLY")
+            self._check_identity(connection)
+            for column in metadata_columns:
+                self.assertTrue(connection.execute(text(
+                    "SELECT has_column_privilege(current_user, 'public.metadata', :column, 'SELECT')"
+                ), {"column": column}).scalar_one(), column)
+            self.assertTrue(connection.execute(text(
+                "SELECT has_table_privilege(current_user, 'public.metadata', 'INSERT')"
+            )).scalar_one())
+            for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
+                self.assertFalse(connection.execute(text(
+                    "SELECT has_table_privilege(current_user, 'public.metadata', :privilege)"
+                ), {"privilege": privilege}).scalar_one(), privilege)
+            connection.execute(text(
+                "SELECT id, source_id, source_url, source_title, source_type, domain, published_at, updated_at "
+                "FROM public.metadata LIMIT 0"
+            ))
+            connection.rollback()
+
+    def test_runtime_metadata_privileges_cover_conflict_verification(self) -> None:
+        from sqlalchemy import text
+
+        columns = ("id", "source_id", "source_url", "source_title", "source_type", "domain",
+                   "published_at", "updated_at")
+        with self.engine.connect() as connection:
+            connection.exec_driver_sql("BEGIN READ ONLY")
+            self._check_identity(connection)
+            for column in columns:
+                self.assertTrue(connection.execute(text(
+                    "SELECT has_column_privilege(current_user, 'public.metadata', :column, 'SELECT')"
+                ), {"column": column}).scalar_one(), column)
+            self.assertTrue(connection.execute(text(
+                "SELECT has_table_privilege(current_user, 'public.metadata', 'INSERT')"
+            )).scalar_one())
+            for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
+                self.assertFalse(connection.execute(text(
+                    "SELECT has_table_privilege(current_user, 'public.metadata', :privilege)"
+                ), {"privilege": privilege}).scalar_one(), privilege)
+            connection.execute(text(
+                "SELECT id, source_id, source_url, source_title, source_type, domain, published_at, updated_at "
+                "FROM public.metadata LIMIT 0"
+            ))
+            connection.rollback()
+
     def test_orphan_chunk_model_pair_is_refused(self) -> None:
         from sqlalchemy import text
         from sqlalchemy.exc import IntegrityError

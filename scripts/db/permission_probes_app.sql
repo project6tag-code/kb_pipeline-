@@ -5,7 +5,7 @@
 -- Run AS kb_pipeline_app (runbook step 16, docs/migrations_kbp.md section 6).
 -- NOT executed during preparation.
 --
---   psql -X -v ON_ERROR_STOP=1 -h localhost -U kb_pipeline_app -d data_collection_pipeline
+--   psql -X -v ON_ERROR_STOP=1 -h localhost -U kb_pipeline_app -d kb_pipeline_test
 --        -f scripts/db/permission_probes_app.sql > <evidence>/16_permission_probes.txt 2>&1
 --
 -- Each probe attempts one operation and checks the outcome:
@@ -56,7 +56,6 @@ BEGIN
         ('A06', 'denied',  $q$INSERT INTO public.dataset_sources (id, name, source_type, authentication_required, status)
                               SELECT NULL::uuid, NULL::varchar, NULL::varchar, NULL::boolean, NULL::varchar WHERE false$q$),
         ('A07', 'denied',  $q$SELECT status FROM public.datasets LIMIT 0$q$),
-        ('A08', 'denied',  $q$SELECT domain FROM public.metadata LIMIT 0$q$),
         -- Identity and content columns are immutable (privileges section 12, invariant 5).
         ('A09', 'denied',  $q$UPDATE kbp.chunk_registry SET chunk_text = chunk_text WHERE false$q$),
         ('A10', 'denied',  $q$UPDATE kbp.document_registry SET canonical_text = canonical_text WHERE false$q$),
@@ -77,7 +76,8 @@ BEGIN
         -- What the runtime needs must work.
         ('B01', 'allowed', $q$SELECT version_num FROM kbp.alembic_version$q$),
         ('B02', 'allowed', $q$SELECT id, chunk, embedding FROM public.kb LIMIT 0$q$),
-        ('B03', 'allowed', $q$SELECT id, source_id FROM public.metadata LIMIT 0$q$),
+        ('B03', 'allowed', $q$SELECT id, source_id, source_url, source_title, source_type, domain, published_at, updated_at
+                      FROM public.metadata LIMIT 0$q$),
         ('B04', 'allowed', $q$SELECT id, source_id, dataset_name, metadata FROM public.datasets LIMIT 0$q$),
         ('B05', 'allowed', $q$SELECT id, name, source_type FROM public.dataset_sources LIMIT 0$q$),
         ('B06', 'allowed', $q$SELECT * FROM kbp.source_dataset_map LIMIT 0$q$),
@@ -112,6 +112,22 @@ BEGIN
 
     IF failures > 0 THEN
         RAISE EXCEPTION 'PERMISSION PROBES FAILED: % unexpected outcome(s)', failures;
+    END IF;
+    IF NOT (
+        has_column_privilege(current_user, 'public.metadata', 'id', 'SELECT')
+        AND has_column_privilege(current_user, 'public.metadata', 'source_id', 'SELECT')
+        AND has_column_privilege(current_user, 'public.metadata', 'source_url', 'SELECT')
+        AND has_column_privilege(current_user, 'public.metadata', 'source_title', 'SELECT')
+        AND has_column_privilege(current_user, 'public.metadata', 'source_type', 'SELECT')
+        AND has_column_privilege(current_user, 'public.metadata', 'domain', 'SELECT')
+        AND has_column_privilege(current_user, 'public.metadata', 'published_at', 'SELECT')
+        AND has_column_privilege(current_user, 'public.metadata', 'updated_at', 'SELECT')
+        AND has_table_privilege(current_user, 'public.metadata', 'INSERT')
+        AND NOT has_table_privilege(current_user, 'public.metadata', 'UPDATE')
+        AND NOT has_table_privilege(current_user, 'public.metadata', 'DELETE')
+        AND NOT has_table_privilege(current_user, 'public.metadata', 'TRUNCATE')
+    ) THEN
+        RAISE EXCEPTION 'public.metadata privileges differ from SELECT(all 8 columns), INSERT only';
     END IF;
     RAISE NOTICE 'PERMISSION PROBES PASSED';
 END

@@ -183,7 +183,7 @@ schema-wide grant, and no ownership change.
 |---|---|---|---|
 | `public.dataset_sources` | `SELECT (id, name, source_type)` | startup self-check that each `kbp.source_dataset_map` bridge still points to a `datasets` row whose parent `dataset_sources.name` equals the channel | INSERT, UPDATE, DELETE, TRUNCATE, other columns |
 | `public.datasets` | `SELECT (id, source_id, dataset_name, metadata)` | the same startup bridge self-check (the row exists, the parent matches, and `metadata.kind` is the bridge marker) | **INSERT**, UPDATE, DELETE, TRUNCATE, REFERENCES, other columns |
-| `public.metadata` | `SELECT (id, source_id)`, `INSERT` (all columns) | Gold publication step 2: `INSERT … ON CONFLICT (id) DO NOTHING`; conflict verification reads `source_id` (§13.2); legacy reconciliation reads `source_id` (§15) | **UPDATE, DELETE**, TRUNCATE, REFERENCES, TRIGGER |
+| `public.metadata` | `SELECT (id, source_id, source_url, source_title, source_type, domain, published_at, updated_at)`, `INSERT` (all columns) | Gold publication step 2: `INSERT … ON CONFLICT (id) DO NOTHING`; insert-conflict verification compares every immutable metadata field (§13.2); legacy reconciliation reads `source_id` (§15) | **UPDATE, DELETE**, TRUNCATE, REFERENCES, TRIGGER |
 | `public.kb` | `SELECT`, `INSERT` | Gold publication step 3: insert-once; verification reads `chunk` and `embedding` (§13.2); drift audit reads `id` (§13.3); legacy reconciliation reads `chunk` (§15) | **UPDATE, DELETE**, TRUNCATE, REFERENCES, TRIGGER |
 
 Additional rules:

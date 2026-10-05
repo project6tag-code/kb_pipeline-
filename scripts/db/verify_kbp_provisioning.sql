@@ -259,7 +259,7 @@ BEGIN
                      ('kb_pipeline_app', 'kb', '*', 'SELECT'),
                      ('kb_pipeline_app', 'kb', '*', 'INSERT'),
                      ('kb_pipeline_app', 'metadata', '*', 'INSERT'),
-                     ('kb_pipeline_app', 'metadata', 'id,source_id', 'SELECT'),
+                     ('kb_pipeline_app', 'metadata', 'id,source_id,source_url,source_title,source_type,domain,published_at,updated_at', 'SELECT'),
                      ('kb_pipeline_app', 'datasets', 'id,source_id,dataset_name,metadata', 'SELECT'),
                      ('kb_pipeline_app', 'dataset_sources', 'id,name,source_type', 'SELECT'),
                      ('kb_pipeline_migrator', 'datasets', '*', 'SELECT'),
