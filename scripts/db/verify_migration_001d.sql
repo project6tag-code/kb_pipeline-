@@ -22,8 +22,8 @@ BEGIN
     IF current_database() <> 'kb_pipeline_test' THEN
         RAISE EXCEPTION 'refusing verification on database % (expected kb_pipeline_test)', current_database();
     END IF;
-    IF (SELECT count(*) FROM kbp.alembic_version WHERE version_num = 'kbp_001d') <> 1 THEN
-        RAISE EXCEPTION 'kbp.alembic_version is not exactly kbp_001d';
+    IF (SELECT count(*) FROM kbp.alembic_version WHERE version_num IN ('kbp_001d', 'kbp_001e')) <> 1 THEN
+        RAISE EXCEPTION 'kbp.alembic_version is not kbp_001d or kbp_001e';
     END IF;
     tbl := 'kbp.gold_publications'::regclass;
     IF (SELECT pg_catalog.pg_get_userbyid(relowner) FROM pg_catalog.pg_class WHERE oid = tbl)

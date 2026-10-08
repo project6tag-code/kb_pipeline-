@@ -11,10 +11,11 @@ import hashlib
 import json
 from typing import Any
 
+from app.config import target
 from app.processing.gold_bridge import spec
 
-EXPECTED_REVISION = "kbp_001d"
-REQUIRED_DATABASE = "kb_pipeline_test"
+EXPECTED_REVISION = "kbp_001e"
+REQUIRED_DATABASE = target.DEFAULT_DATABASE  # default only; the enforced name is KB_EXPECTED_DATABASE
 FORBIDDEN_DATABASES = frozenset({"data_collection_pipeline"})
 PIPELINE_ROLES = frozenset({"kb_pipeline_app", "kb_pipeline_migrator"})
 
@@ -174,8 +175,13 @@ def _metadata_columns_from_inventory(inventory: dict[str, tuple]) -> tuple[str, 
 
 
 def verify_target(conn: Any, expect_database: str) -> dict[str, Any]:
-    if expect_database in FORBIDDEN_DATABASES or expect_database != REQUIRED_DATABASE:
-        raise MetadataPatchRefused(f"--expect-database {expect_database!r} is refused; only {REQUIRED_DATABASE!r} is allowed")
+    try:
+        expected = target.expected_database()
+    except target.TargetConfigError as exc:
+        raise MetadataPatchRefused(str(exc)) from None
+    if expect_database in FORBIDDEN_DATABASES or expect_database != expected:
+        raise MetadataPatchRefused(f"--expect-database {expect_database!r} is refused; only {expected!r} "
+                                   f"({target.ENV_NAME}) is allowed")
     row = dict(conn.execute(_text(IDENTITY_SQL)).mappings().one())
     if row["database"] in FORBIDDEN_DATABASES or row["database"] != expect_database:
         raise MetadataPatchRefused(f"connected to database {row['database']!r}, expected {expect_database!r}")

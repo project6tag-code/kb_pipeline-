@@ -24,11 +24,16 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from app.config import target
 from app.utils.ids import DATASET_BRIDGE_PREFIX, KB_NAMESPACE, make_dataset_bridge_id
 
-ALLOWED_DATABASES = frozenset({"kb_pipeline_test"})  # authorized targets for this V1 test bridge
-FORBIDDEN_DATABASES = frozenset({"data_collection_pipeline"})
-EXPECTED_REVISION = "kbp_001d"
+FORBIDDEN_DATABASES = target.FORBIDDEN_DATABASES  # includes data_collection_pipeline
+
+
+def allowed_databases() -> frozenset[str]:
+    """The one authorized bridge target: KB_EXPECTED_DATABASE (default ``kb_pipeline_test``)."""
+    return frozenset({target.expected_database()})
+EXPECTED_REVISION = "kbp_001e"
 STATUS_KB_REFERENCE = "KB_REFERENCE"
 LEGACY_WORKFLOW_STATUSES = frozenset({"ACCEPTED", "DISCOVERED", "REJECTED"})  # never used for bridge rows
 DATASET_SOURCE_PREFIX = "dataset-source:v1:"

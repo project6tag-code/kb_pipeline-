@@ -49,3 +49,20 @@ data/chunk_dedup/*
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
+# --- Database backups / exports ----------------------------------------------
+backup/
+*.dump
+*.backup
+*.bak
+*.sql.gz
+pgpass.conf
+*.pfx
+*.log
+
+# --- Temporary/local runtime files -------------------------------------------
+tmp/
+temp/
+*.tmp
+
+# --- Local model/cache downloads ---------------------------------------------
+.cache/

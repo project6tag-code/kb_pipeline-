@@ -61,6 +61,8 @@ DEFAULT_EXCLUDED_DIRS = (
     "bower_components", "jspm_packages", "vendor", "vendors", "third_party", "third-party", "thirdparty",
     "3rdparty", "external", "deps", "site-packages", "__pycache__", "dist", "build", "out", "target",
     "bin", "obj", "coverage", ".next", ".nuxt", ".cache", "pods", "carthage", "generated",
+    "test", "tests", "__tests__", "spec", "specs", "fixtures", "mock", "mocks",
+    "example", "examples", "demo", "demos", "sample", "samples",
 )
 
 

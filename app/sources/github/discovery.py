@@ -137,6 +137,13 @@ def qualify_repository(item: Any, policy: RepositoryPolicy) -> tuple[RepositoryR
     branch = item.get("default_branch")
     if not valid_ref(branch):
         return None, "unsupported_default_branch"
+    description = item.get("description", "").lower() if isinstance(item.get("description"), str) else ""
+    topics = [t.lower() for t in item.get("topics", [])] if isinstance(item.get("topics"), list) else []
+    test_keywords = {"test", "testing", "mock", "fixture", "example", "demo", "sample", "synthetic", "toy"}
+    if any(kw in description for kw in test_keywords):
+        return None, "test_description"
+    if any(kw in topics for kw in test_keywords):
+        return None, "test_topics"
     node_id = item.get("node_id") if isinstance(item.get("node_id"), str) else None
     return RepositoryRow(repository_id=repo_id, node_id=node_id, owner_login=login, repo_name=name,
                          html_url=html_url, default_branch=branch, visibility="public", license_spdx_id=spdx,

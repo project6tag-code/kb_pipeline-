@@ -4,14 +4,17 @@ import json
 import unittest
 import uuid
 
-from app.sources.commoncrawl.config import FilterConfig
+from app.config.settings import SettingsError
+from app.sources.commoncrawl.config import CCSettings, FilterConfig
 from app.sources.commoncrawl.index import (
     IndexRowError,
     InvalidSourceUrl,
+    host_matches,
     parse_cdx_line,
     rejection_reason,
     source_url_host,
     split_block_lines,
+    url_rejection,
 )
 from app.utils.ids import cc_observation_id
 
@@ -125,10 +128,82 @@ class FilterTests(unittest.TestCase):
 
     def test_filter_version_is_deterministic_and_parameter_bound(self) -> None:
         self.assertEqual(FilterConfig().version, FilterConfig(mime_types=("text/html", "application/xhtml+xml")).version)
-        self.assertRegex(FilterConfig().version, r"^f1\.[0-9a-f]{12}$")
+        self.assertRegex(FilterConfig().version, r"^f2\.[0-9a-f]{12}$")
         variants = [FilterConfig(languages=()), FilterConfig(reject_truncated=False),
-                    FilterConfig(max_record_bytes=1024 * 1024), FilterConfig(mime_types=("text/html",))]
-        self.assertEqual(len({v.version for v in variants} | {FilterConfig().version}), 5)
+                    FilterConfig(max_record_bytes=1024 * 1024), FilterConfig(mime_types=("text/html",)),
+                    FilterConfig(profile="reference", reference_domains=("en.wikipedia.org",)),
+                    FilterConfig(profile="reference", reference_domains=("britannica.com",))]
+        self.assertEqual(len({v.version for v in variants} | {FilterConfig().version}), 7)
+
+
+class UrlPolicyTests(unittest.TestCase):
+    def test_article_urls_pass(self) -> None:
+        for url in ("https://en.wikipedia.org/wiki/Photosynthesis", "https://www.britannica.com/science/photosynthesis",
+                    "https://www.cdc.gov/flu/about/index.html", "https://example.com/2019/05/article-title?id=3",
+                    "https://example.com/page"):
+            with self.subTest(url=url):
+                self.assertIsNone(url_rejection(url))
+
+    def test_non_content_urls_are_rejected(self) -> None:
+        cases = {
+            "http://75.34.128.137/shoprd/pcat_55201000040_5880_view.htm": "ip_host",
+            "http://[2001:db8::1]/a": "ip_host",
+            "https://example.com:8080/a": "non_default_port",
+            "https://example.com/terms/": "junk_path:terms",
+            "https://shop.example.com/products/123": "junk_path:products",
+            "https://example.com/wp-login.php": "junk_path:wp-login",
+            "https://example.com/blog/page/3/": "pagination",
+            "https://example.com/examples/demo-article": "junk_path:examples",
+            "https://en.wikipedia.org/wiki/Talk:Photosynthesis": "wiki_namespace",
+            "https://en.wikipedia.org/wiki/Special:Random": "wiki_namespace",
+            "https://en.wikipedia.org/w/index.php?title=X&action=edit": "junk_query",
+            "https://example.com/a?utm_source=x": "junk_query",
+            "https://example.com/a?x=1&y=2&z=3": "query_too_complex",
+            "https://example.com/data/latest.json": "data_file",
+            "https://example.com/" + "a/" * 9: "deep_path",
+            "https://example.com/" + "x" * 300: "url_too_long",
+            "https://www.nasa.gov/": "homepage",
+            "https://example.com": "homepage",
+            "https://example.com/index.html": "homepage",
+        }
+        for url, reason in cases.items():
+            with self.subTest(url=url):
+                self.assertEqual(url_rejection(url), reason)
+
+    def test_url_policy_applies_inside_the_candidate_filter(self) -> None:
+        record = parse_cdx_line(line(url="https://example.com/cart"), CRAWL)
+        self.assertEqual(rejection_reason(record, FILTER), "junk_path:cart")
+
+    def test_reference_profile_keeps_only_listed_publishers(self) -> None:
+        reference = FilterConfig(profile="reference", reference_domains=("en.wikipedia.org", "www.britannica.com"))
+        self.assertEqual(reference.reference_domains, ("britannica.com", "en.wikipedia.org"))
+        keep = parse_cdx_line(line(url="https://en.wikipedia.org/wiki/Oxygen", urlkey="org,wikipedia,en)/wiki/oxygen"),
+                              CRAWL)
+        sub = parse_cdx_line(line(url="https://www.britannica.com/science/oxygen"), CRAWL)
+        other = parse_cdx_line(line(url="https://de.wikipedia.org/wiki/Sauerstoff"), CRAWL)
+        self.assertIsNone(rejection_reason(keep, reference))
+        self.assertIsNone(rejection_reason(sub, reference))
+        self.assertEqual(rejection_reason(other, reference), "not_reference_domain")
+        self.assertTrue(host_matches("en.wikipedia.org", ("en.wikipedia.org",)))
+        self.assertFalse(host_matches("fakeen.wikipedia.org.evil.com", ("en.wikipedia.org",)))
+
+    def test_profiles_are_validated(self) -> None:
+        with self.assertRaises(SettingsError):
+            FilterConfig(profile="reference")
+        with self.assertRaises(SettingsError):
+            FilterConfig(profile="open", reference_domains=("example.com",))
+        with self.assertRaises(SettingsError):
+            FilterConfig(profile="reference", reference_domains=("not a domain",))
+        with self.assertRaises(SettingsError):
+            FilterConfig(profile="everything")
+
+    def test_environment_default_is_the_curated_reference_profile(self) -> None:
+        settings = CCSettings.from_env({})
+        self.assertEqual(settings.acquisition.filter.profile, "reference")
+        self.assertIn("en.wikipedia.org", settings.acquisition.filter.reference_domains)
+        self.assertEqual(CCSettings.from_env({"KB_CC_PROFILE": "open"}).acquisition.filter.reference_domains, ())
+        custom = CCSettings.from_env({"KB_CC_REFERENCE_DOMAINS": "nasa.gov, who.int"})
+        self.assertEqual(custom.acquisition.filter.reference_domains, ("nasa.gov", "who.int"))
 
 
 class FrozenObservationIdentityTests(unittest.TestCase):

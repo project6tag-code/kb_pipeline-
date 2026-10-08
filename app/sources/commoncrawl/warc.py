@@ -18,7 +18,12 @@ Metadata taken from the source only (never synthesized):
   whitespace-collapsed) or None;
 * ``canonical_url``: the literal ``<link rel="canonical" href>`` resolved against
   the target URI, or None;
-* ``source_published_at`` is never derived in V1 (schema O-9).
+* page dates (``app.sources.commoncrawl.dates``): published / modified dates the
+  publisher declared in the page (JSON-LD, ``<meta>``, ``<time>``) and the HTTP
+  ``Last-Modified`` header, each validated against the crawl time; never guessed.
+
+A ``WARC-Record-ID`` is required: it is the original archived document's own
+identity and becomes the Gold ``source_id`` (docs/cc_fact_kb_v2.md).
 """
 
 from __future__ import annotations
@@ -35,11 +40,13 @@ from datetime import datetime
 from urllib.parse import urljoin
 
 from app.sources.commoncrawl.compression import CompressionError, decompress_single_member
+from app.sources.commoncrawl.dates import PageDates, extract_dates
 from app.sources.commoncrawl.index import CdxRecord, InvalidSourceUrl, source_url_host
 
-HTML_METADATA_VERSION = "ccmeta-v1"
+HTML_METADATA_VERSION = "ccmeta-v2"
 MAX_HEADER_BLOCK_BYTES = 64 * 1024
 HTML_SCAN_BYTES = 256 * 1024
+DATE_SCAN_BYTES = 8 * 1024 * 1024  # dates may sit at the end of a page (Wikipedia's JSON-LD does)
 MAX_TITLE_CHARS = 2000
 MAX_HEADER_VALUE_CHARS = 1000
 HTML_MIMES = frozenset({"text/html", "application/xhtml+xml"})
@@ -74,6 +81,7 @@ class WarcCapture:
     source_title: str | None
     canonical_url: str | None
     payload_bytes: int
+    page_dates: PageDates = PageDates(None, None, None, None, None)
     warc_headers: dict[str, str] = field(default_factory=dict)
     http_headers: dict[str, str] = field(default_factory=dict)
 
@@ -140,13 +148,13 @@ def _charset(content_type: str | None, body: bytes) -> str | None:
     return None  # pragma: no cover
 
 
-def _decoded_prefix(body: bytes, content_type: str | None) -> str | None:
+def _decoded_prefix(body: bytes, content_type: str | None, limit: int = HTML_SCAN_BYTES) -> str | None:
     encoding = _charset(content_type, body)
     if encoding is None:
         return None
     try:
         decoder = codecs.getincrementaldecoder(encoding)(errors="strict")
-        return decoder.decode(body[:HTML_SCAN_BYTES], final=False)
+        return decoder.decode(body[:limit], final=False)
     except (UnicodeDecodeError, LookupError, ValueError):
         return None
 
@@ -244,25 +252,34 @@ def parse_warc_record(compressed: bytes, expected: CdxRecord, *, max_decompresse
             record_id = uuid.UUID(id_match.group(1))
         except ValueError:
             record_id = None
+    if record_id is None:
+        raise WarcRecordError("missing_record_id", "WARC-Record-ID is missing or not a urn:uuid")
+    warc_date = _parse_warc_date(warc_headers.get("warc-date"))
+    if warc_date is None:
+        raise WarcRecordError("missing_warc_date", "WARC-Date is missing or not an ISO 8601 UTC timestamp")
 
     content_type = _clean(http_headers.get("content-type"))
-    title = canonical = None
+    title = canonical = text = None
     encoded = http_headers.get("content-encoding", "identity").lower() not in ("", "identity")
     if expected.effective_mime in HTML_MIMES and not encoded and "transfer-encoding" not in http_headers:
         text = _decoded_prefix(body, content_type)
         if text is not None:
             title = extract_title(text)
             canonical = extract_canonical(text, expected.url)
+    date_text = text
+    if text is not None and len(body) > HTML_SCAN_BYTES:
+        date_text = _decoded_prefix(body, content_type, DATE_SCAN_BYTES) or text
+    page_dates = extract_dates(date_text, http_last_modified=http_headers.get("last-modified"), crawled_at=warc_date)
 
     keep = ("warc-type", "warc-record-id", "warc-date", "warc-target-uri", "warc-payload-digest",
             "warc-block-digest", "warc-identified-payload-type", "warc-ip-address", "warc-truncated",
             "content-type", "content-length")
     return WarcCapture(
         warc_version=version, warc_type=warc_type, target_uri=target, record_id=record_id,
-        warc_date=_parse_warc_date(warc_headers.get("warc-date")), payload_digest=payload_digest,
+        warc_date=warc_date, payload_digest=payload_digest,
         payload_digest_verified=verified, http_status=http_status, http_content_type=content_type,
         redirect_location=_clean(http_headers.get("location"), 4096), source_title=title,
-        canonical_url=canonical, payload_bytes=len(body),
+        canonical_url=canonical, payload_bytes=len(body), page_dates=page_dates,
         warc_headers={k: v for k, v in warc_headers.items() if k in keep and len(v) <= 4096},
         http_headers={k: v for k, v in http_headers.items()
                       if k in ("content-type", "content-length", "content-language", "last-modified",

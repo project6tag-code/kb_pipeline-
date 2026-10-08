@@ -3,7 +3,7 @@
 import json
 import unittest
 
-from app.processing.chunking import tokenizer
+from app.processing.chunking import plain, tokenizer
 from app.processing.chunking.chunker import ChunkingConfig, ChunkingLimit, chunk_document
 from app.processing.chunking.structure import parse_blocks
 from app.processing.normalization.text import canonicalize_text
@@ -29,11 +29,15 @@ def accepted(result):
 
 
 class InvariantMixin:
-    def assertInvariants(self, doc: str, result, config: ChunkingConfig = CONFIG) -> None:
+    def assertInvariants(self, doc: str, result, config: ChunkingConfig = CONFIG, kind: str = "prose") -> None:
         last_end = 0
         for c in result:
-            self.assertEqual(canonicalize_text(doc[c.char_start:c.char_end]), c.chunk_text)  # schema §5.15
-            self.assertEqual(doc[c.char_start:c.char_end], c.chunk_text)  # spans are already canonical
+            span = doc[c.char_start:c.char_end]
+            self.assertEqual(canonicalize_text(plain.render(span, kind)), c.chunk_text)  # c2 plain-text invariant
+            self.assertEqual(canonicalize_text(span), span)  # spans are already canonical
+            if kind not in ("code", "config"):  # stored chunk text carries no Markdown markers
+                markers = ("#", "- ", "> ", "```", "|")
+                self.assertFalse(any(line.startswith(markers) for line in c.chunk_text.split("\n")), c.chunk_text[:80])
             self.assertLess(c.char_start, c.char_end)
             self.assertGreaterEqual(c.char_start, last_end)  # ordered, non-overlapping (no overlap in V1)
             last_end = c.char_end
@@ -51,15 +55,17 @@ class StructureTests(InvariantMixin, unittest.TestCase):
                          [(c.char_start, c.char_end, c.chunk_text) for c in second])
         self.assertEqual(ChunkingConfig().name, ChunkingConfig().name)
         self.assertNotEqual(ChunkingConfig(target_tokens=300).name, ChunkingConfig().name)
-        self.assertRegex(CONFIG.name, r"^kbp-chunker-c1-[0-9a-f]{10}$")
+        self.assertRegex(CONFIG.name, r"^kbp-chunker-c2-[0-9a-f]{10}$")
 
     def test_headings_start_chunks_and_heading_paths_are_recorded(self) -> None:
         doc, result = chunks("# Glaciers\n\n" + section("Formation", 10) + "\n\n" + section("Movement", 10)
                              + "\n\n" + section("Basal sliding", 8, level=3))
         self.assertInvariants(doc, result)
-        texts = [c.chunk_text for c in result]
-        self.assertTrue(texts[0].startswith("# Glaciers\n\n## Formation"))  # tiny title merges forward
-        self.assertTrue(texts[1].startswith("## Movement"))
+        spans = [doc[c.char_start:c.char_end] for c in result]
+        self.assertTrue(spans[0].startswith("# Glaciers\n\n## Formation"))  # tiny title merges forward
+        self.assertTrue(spans[1].startswith("## Movement"))
+        self.assertTrue(result[0].chunk_text.startswith("Glaciers\n\nFormation\n\nSentence 0"))  # plain text
+        self.assertTrue(result[1].chunk_text.startswith("Movement\n\n"))
         self.assertEqual(json.loads(result[0].section_path), {"headings": ["Glaciers", "Formation"]})
         self.assertEqual(json.loads(result[1].section_path)["headings"], ["Glaciers", "Movement"])
         last = json.loads(result[-1].section_path)["headings"]
@@ -70,8 +76,11 @@ class StructureTests(InvariantMixin, unittest.TestCase):
         doc, result = chunks("# Ice\n\n## A\n\nShort fact one about ice.\n\n## B\n\nShort fact two about ice.\n\n"
                              "# Rivers\n\n" + section("Flow", 12, topic="rivers"))
         self.assertInvariants(doc, result)
-        self.assertTrue(result[0].chunk_text.startswith("# Ice\n\n## A") and "## B" in result[0].chunk_text)
-        self.assertFalse(any("# Ice" in c.chunk_text and "# Rivers" in c.chunk_text for c in result))
+        spans = [doc[c.char_start:c.char_end] for c in result]
+        self.assertTrue(spans[0].startswith("# Ice\n\n## A") and "## B" in spans[0])
+        self.assertFalse(any("# Ice" in s and "# Rivers" in s for s in spans))
+        self.assertEqual(result[0].chunk_text,
+                         "Ice\n\nA\n\nShort fact one about ice.\n\nB\n\nShort fact two about ice.")
 
     def test_oversized_paragraph_splits_at_sentence_boundaries(self) -> None:
         doc, result = chunks("## Long\n\n" + " ".join(sentence(i) for i in range(80)))
@@ -99,8 +108,11 @@ class StructureTests(InvariantMixin, unittest.TestCase):
         self.assertGreater(len(result), 1)
         for c in result:
             self.assertTrue(c.chunk_text.split("\n")[-1].endswith("field."))  # whole items only
-            body = [line for line in c.chunk_text.split("\n") if line and not line.startswith("#")]
-            self.assertTrue(all(line.startswith("- Term") for line in body))
+            span = doc[c.char_start:c.char_end]
+            body = [line for line in span.split("\n") if line and not line.startswith("#")]
+            self.assertTrue(all(line.startswith("- Term") for line in body))  # whole list items in the span
+            plain_body = [line for line in c.chunk_text.split("\n") if line.startswith("Term")]
+            self.assertEqual(len(plain_body), len(body))  # every item kept, without its "- " marker
 
     def test_tables_keep_headers_with_row_groups(self) -> None:
         rows = "\n".join(f"Glacier {i} | {1000 + i} km2 | Retreating since {1900 + i}" for i in range(150))
@@ -108,14 +120,15 @@ class StructureTests(InvariantMixin, unittest.TestCase):
         self.assertInvariants(doc, result)
         self.assertGreater(len(result), 1)
         self.assertTrue(result[0].chunk_text.endswith(result[0].chunk_text.split("\n")[-1]))
-        self.assertIn("Name | Area | Status", result[0].chunk_text)
+        self.assertIn("Name; Area; Status", result[0].chunk_text)  # plain-text table row
         for c in result[1:]:
             context = json.loads(c.section_path)
             self.assertEqual(context["table_header"], "Name | Area | Status")  # header meaning is kept
-            self.assertTrue(all(" | " in line for line in c.chunk_text.split("\n")))
+            self.assertTrue(all(" | " in line for line in doc[c.char_start:c.char_end].split("\n")))
+            self.assertTrue(all("; " in line and "|" not in line for line in c.chunk_text.split("\n")))
         small_doc, small = chunks("## Inputs\n\nInput | Output\nWater | Oxygen\nCarbon dioxide | Glucose\n\n"
                                   + " ".join(sentence(i) for i in range(5)))
-        self.assertIn("Input | Output\nWater | Oxygen\nCarbon dioxide | Glucose", small[0].chunk_text)
+        self.assertIn("Input: Output\nWater: Oxygen\nCarbon dioxide: Glucose", small[0].chunk_text)
 
     def test_code_prefers_definition_boundaries_and_never_splits_lines(self) -> None:
         functions = "\n\n".join(
@@ -123,7 +136,7 @@ class StructureTests(InvariantMixin, unittest.TestCase):
             + "\n".join(f" result = result + {j} # step {j} of the computation" for j in range(12))
             + "\n return result" for i in range(20))
         doc, result = chunks(functions, kind="code")
-        self.assertInvariants(doc, result)
+        self.assertInvariants(doc, result, kind="code")
         self.assertGreater(len(result), 1)
         for c in result:
             self.assertTrue(c.chunk_text.startswith("def function_"), c.chunk_text[:30])
@@ -132,7 +145,9 @@ class StructureTests(InvariantMixin, unittest.TestCase):
         self.assertIsNone(result[0].section_path)  # '#' in code is not a heading
         fenced_doc, fenced = chunks("## Example\n\nRun the sample below to compute checksums of large files.\n\n"
                                     "```\nimport hashlib\n\ndigest = hashlib.sha256()\n```")
-        self.assertIn("```\nimport hashlib\n\ndigest = hashlib.sha256()\n```", fenced[0].chunk_text)
+        self.assertIn("import hashlib\n\ndigest = hashlib.sha256()", fenced[0].chunk_text)
+        self.assertNotIn("```", fenced[0].chunk_text)  # fences are structure, not chunk text
+        self.assertTrue(fenced[0].chunk_text.startswith("Example\n\nRun the sample"))
 
     def test_blocks_parse_fences_with_blank_lines(self) -> None:
         kinds = [b.kind for b in parse_blocks("# T\n\ntext\n\n```\na\n\nb\n```\n\n- x\n- y\n\nA | B\n1 | 2")]

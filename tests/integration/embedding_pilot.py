@@ -11,7 +11,7 @@ Prerequisites (once):
 The pilot embeds every currently eligible representative chunk. Suppressed
 near-duplicates are never embedded; they resolve to their representative. A
 rerun adds nothing. It refuses to run unless connected as kb_pipeline_app to
-exactly kb_pipeline_test at the current kbp revision (kbp_001d).
+exactly kb_pipeline_test at the current kbp revision (kbp_001e).
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Psycopg-native SQL for Gold Publisher V1.
+"""Psycopg-native SQL for Gold Publisher V2 (per-document source ids, page dates, crawl date).
 
 No SQLAlchemy imports are used in this package. Every write is scoped to
 kb_pipeline_test by the service's identity guard and run in an explicit
@@ -85,10 +85,21 @@ SELECT source_channel, dataset_id FROM kbp.source_dataset_map ORDER BY source_ch
 PROVENANCE_SQL = """
 SELECT c.chunk_id, c.chunk_text, c.chunk_hash, c.first_document_id,
        c.representative_observation_id, d.subject_domain,
-       o.source_channel, o.source_url, o.source_title, o.source_published_at
+       o.source_channel, o.source_url, o.source_title, o.source_published_at, o.acquired_at,
+       cap.warc_record_id, cap.warc_record_offset, cap.warc_record_length, cap.payload_digest,
+       cap.detected_mime, cap.http_content_type,
+       w.crawl_id, w.warc_filename,
+       sd.published_at AS page_published_at, sd.published_evidence, sd.modified_at AS page_modified_at,
+       sd.modified_evidence, sd.http_last_modified, sd.crawled_at,
+       g.repository_id, g.commit_sha, g.file_path, g.blob_sha, gc.committed_at
 FROM kbp.chunk_registry c
 JOIN kbp.document_registry d ON d.document_id = c.first_document_id
 JOIN kbp.source_observations o ON o.observation_id = c.representative_observation_id
+LEFT JOIN kbp.cc_captures cap ON cap.observation_id = o.observation_id
+LEFT JOIN kbp.cc_warc_files w ON w.warc_file_id = cap.warc_file_id
+LEFT JOIN kbp.source_dates sd ON sd.observation_id = o.observation_id
+LEFT JOIN kbp.github_file_observations g ON g.observation_id = o.observation_id
+LEFT JOIN kbp.github_commits gc ON gc.repository_id = g.repository_id AND gc.commit_sha = g.commit_sha
 WHERE c.chunk_id = %s
 """
 
@@ -112,12 +123,22 @@ WHERE chunk_id = %s AND dedup_method_id = %s
 LOCK_CHUNK_SQL = "SELECT pg_catalog.pg_advisory_xact_lock(%s)"
 
 METADATA_GET_SQL = """
-SELECT id, source_id, source_url, source_title, source_type, domain, published_at, updated_at
+SELECT id, source_id, source_url, source_title, source_type, domain, published_at, updated_at, crawled_at
 FROM public.metadata WHERE id = %s
 """
 
+DATASET_GET_SQL = """
+SELECT id, source_id, dataset_name, status, metadata FROM public.datasets WHERE id = %s
+"""
+
+DATASET_INSERT_SQL = """
+INSERT INTO public.datasets (id, source_id, dataset_name, status, metadata)
+VALUES (%s, %s, %s, %s, CAST(%s AS jsonb))
+ON CONFLICT (id) DO NOTHING
+"""
+
 KB_GET_SQL = """
-SELECT id, chunk, public.vector_send(embedding) AS embedding_wire
+SELECT id, source_id, chunk, public.vector_send(embedding) AS embedding_wire
 FROM public.kb WHERE id = %s
 """
 
@@ -127,14 +148,15 @@ FROM kbp.gold_publications WHERE chunk_id = %s AND embedding_model_id = %s
 """
 
 METADATA_INSERT_SQL = """
-INSERT INTO public.metadata (id, source_id, source_url, source_title, source_type, domain, published_at, updated_at)
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+INSERT INTO public.metadata (id, source_id, source_url, source_title, source_type, domain, published_at, updated_at,
+                             crawled_at)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (id) DO NOTHING
 """
 
 KB_INSERT_SQL = """
-INSERT INTO public.kb (id, chunk, embedding)
-VALUES (%s, %s, CAST(%s AS public.vector))
+INSERT INTO public.kb (id, source_id, chunk, embedding)
+VALUES (%s, %s, %s, CAST(%s AS public.vector))
 ON CONFLICT (id) DO NOTHING
 """
 
@@ -147,7 +169,7 @@ ON CONFLICT (chunk_id, embedding_model_id) DO NOTHING
 CREATE_RUN_SQL = """
 INSERT INTO kbp.pipeline_runs (run_id, run_kind, status, started_at, code_version,
                                identity_spec_version, identity_extension_version, host, notes)
-VALUES (%s, 'maintenance', 'running', now(), 'gold-publisher-v1', 'v1', 'v1', %s, %s)
+VALUES (%s, 'maintenance', 'running', now(), 'gold-publisher-v2', 'v1', 'v1', %s, %s)
 """
 
 FINISH_RUN_SQL = """
@@ -170,7 +192,8 @@ SELECT (SELECT count(*) FROM kbp.chunk_registry) AS chunks,
        (SELECT count(*) FROM kbp.source_dataset_map) AS bridge_rows,
        (SELECT count(*) FROM kbp.gold_publications) AS publications,
        (SELECT count(*) FROM public.kb) AS kb_rows,
-       (SELECT count(id) FROM public.metadata) AS metadata_rows
+       (SELECT count(id) FROM public.metadata) AS metadata_rows,
+       (SELECT count(*) FROM public.datasets WHERE status = 'KB_SOURCE_DOCUMENT') AS source_document_rows
 """
 
 SOURCE_COUNTS_SQL = """
@@ -220,15 +243,21 @@ SELECT count(*) AS ledger_rows,
           OR public.vector_dims(v.embedding) <> 768) AS invalid_shadow_rows,
   count(*) FILTER (WHERE m.id IS NULL OR k.id IS NULL) AS missing_gold_rows,
   count(*) FILTER (WHERE m.id IS NOT NULL AND
-          (m.source_id IS DISTINCT FROM map.dataset_id
+          (ds.id IS NULL OR ds.status IS DISTINCT FROM 'KB_SOURCE_DOCUMENT'
+           OR (o.source_channel = 'common_crawl' AND m.source_id IS DISTINCT FROM cap.warc_record_id)
+           OR (o.source_channel = 'common_crawl' AND m.crawled_at IS DISTINCT FROM sd.crawled_at)
+           OR m.source_id IN (SELECT dataset_id FROM kbp.source_dataset_map)
            OR m.source_url IS DISTINCT FROM o.source_url
            OR m.source_title IS DISTINCT FROM o.source_title
-           OR m.source_type IS DISTINCT FROM o.source_channel
+           OR m.source_type IS NULL OR m.source_type NOT IN ('web_page', 'pdf_document', 'plain_text',
+              'xml_document', 'data_file', 'markdown_document', 'documentation_text', 'configuration_file',
+              'source_code')  -- == source_document.SOURCE_TYPES (tested)
            OR m.domain IS DISTINCT FROM doc.subject_domain
-           OR m.published_at IS DISTINCT FROM o.source_published_at
-           OR m.updated_at IS NOT NULL)) AS metadata_mismatches,
+           OR m.published_at IS NULL OR m.updated_at IS NULL OR m.crawled_at IS NULL
+           OR m.updated_at < m.published_at)) AS metadata_mismatches,
   count(*) FILTER (WHERE k.id IS NOT NULL AND
           (k.chunk IS DISTINCT FROM c.chunk_text
+           OR k.source_id IS NULL OR k.source_id IS DISTINCT FROM m.source_id
            OR public.vector_send(k.embedding) IS DISTINCT FROM public.vector_send(v.embedding))) AS kb_mismatches,
   count(*) FILTER (WHERE p.chunk_id IS DISTINCT FROM k.id OR p.chunk_id IS DISTINCT FROM m.id) AS id_mismatches
 FROM kbp.gold_publications p
@@ -236,10 +265,12 @@ LEFT JOIN kbp.chunk_dedup_decisions d ON d.chunk_id = p.chunk_id AND d.dedup_met
 LEFT JOIN kbp.chunk_registry c ON c.chunk_id = p.chunk_id
 LEFT JOIN kbp.document_registry doc ON doc.document_id = c.first_document_id
 LEFT JOIN kbp.source_observations o ON o.observation_id = c.representative_observation_id
-LEFT JOIN kbp.source_dataset_map map ON map.source_channel = o.source_channel
+LEFT JOIN kbp.cc_captures cap ON cap.observation_id = o.observation_id
+LEFT JOIN kbp.source_dates sd ON sd.observation_id = o.observation_id
 LEFT JOIN kbp.chunk_embeddings e ON e.chunk_id = p.chunk_id AND e.embedding_model_id = p.embedding_model_id
 LEFT JOIN kbp.chunk_embedding_vectors v ON v.chunk_id = p.chunk_id AND v.embedding_model_id = p.embedding_model_id
 LEFT JOIN public.metadata m ON m.id = p.chunk_id
+LEFT JOIN public.datasets ds ON ds.id = m.source_id
 LEFT JOIN public.kb k ON k.id = p.chunk_id
 WHERE p.embedding_model_id = %s
 """

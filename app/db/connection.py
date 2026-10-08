@@ -6,7 +6,7 @@
   on any exception;
 * ``health_check()``: read-only identity/readiness probe. The runtime refuses
   to run as any role other than ``kb_pipeline_app``, as a superuser, or
-    against a database whose ``kbp.alembic_version`` is not ``kbp_001d``.
+    against a database whose ``kbp.alembic_version`` is not ``kbp_001e``.
 
 The connection URL is never logged or included in an error message.
 """
@@ -22,7 +22,7 @@ from typing import Any
 from app.config.settings import DatabaseSettings
 
 RUNTIME_ROLE = "kb_pipeline_app"
-EXPECTED_KBP_REVISION = "kbp_001d"
+EXPECTED_KBP_REVISION = "kbp_001e"
 
 
 class RuntimeDatabaseError(RuntimeError):

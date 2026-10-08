@@ -1,4 +1,4 @@
-"""Operator commands for Global Chunk Near-Dedup V1 (``chunk_minhash_lsh`` / ``oph-w3-b10r4-j70-v1``).
+"""Operator commands for Global Chunk Near-Dedup V1 (``chunk_minhash_lsh`` / ``oph-w3-b10r4-j70-v2``).
 
     python -m app.processing.chunk_dedup.cli method
         the frozen method: algorithm, version, parameters (no I/O)

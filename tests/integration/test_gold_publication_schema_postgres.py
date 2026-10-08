@@ -31,7 +31,7 @@ class GoldPublicationSchemaPostgresTests(unittest.TestCase):
         database, role, revision = connection.exec_driver_sql(
             "SELECT current_database(), current_user, (SELECT version_num FROM kbp.alembic_version)"
         ).one()
-        self.assertEqual((database, role, revision), ("kb_pipeline_test", "kb_pipeline_app", "kbp_001d"))
+        self.assertEqual((database, role, revision), ("kb_pipeline_test", "kb_pipeline_app", "kbp_001e"))
 
     def test_runtime_select_insert_and_pair_uniqueness_rollback(self) -> None:
         from sqlalchemy import text

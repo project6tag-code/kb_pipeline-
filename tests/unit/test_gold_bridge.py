@@ -35,7 +35,7 @@ class _Result:
 class FakeDb:
     """The kb_pipeline_test bridge tables, with their PK / UNIQUE rules. Records every executed statement."""
 
-    def __init__(self, *, database="kb_pipeline_test", role="postgres", superuser=True, revision="kbp_001d") -> None:
+    def __init__(self, *, database="kb_pipeline_test", role="postgres", superuser=True, revision="kbp_001e") -> None:
         self.database, self.role, self.superuser, self.revision = database, role, superuser, revision
         self.sources: dict[uuid.UUID, tuple] = {}
         self.datasets: dict[uuid.UUID, tuple] = {}

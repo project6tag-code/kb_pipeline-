@@ -1,6 +1,6 @@
 """One operator entry point for the local source -> Gold run (kb_pipeline_test only).
 
-    python -m app.pipeline.cli run --expect-database kb_pipeline_test [--sources cc,github] [bounds...]
+    python -m app.pipeline.cli run --expect-database kb_pipeline_test [--sources cc] [--cc-profile both] [bounds...]
         discovery -> acquisition -> Bronze -> Silver (extraction, filters, document dedup) -> chunking
         -> chunk dedup -> embedding eligibility -> MPNet embeddings -> Gold publication
     python -m app.pipeline.cli status --expect-database kb_pipeline_test      # read-only health and counts
@@ -28,8 +28,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-REQUIRED_DATABASE = "kb_pipeline_test"
-REQUIRED_REVISION = "kbp_001d"
+from app.config import features, target
+
+REQUIRED_DATABASE = target.DEFAULT_DATABASE  # default only; the enforced name is KB_EXPECTED_DATABASE (app/config/target.py)
+REQUIRED_REVISION = "kbp_001e"
 RUNTIME_ROLE = "kb_pipeline_app"
 MODEL_ID = 2
 EXIT_OK, EXIT_STAGE_FAILED, EXIT_REFUSED, EXIT_INTERRUPTED = 0, 1, 2, 130
@@ -86,6 +88,11 @@ def parse_sources(value: str) -> tuple[str, ...]:
     chosen = tuple(dict.fromkeys(part.strip() for part in value.split(",") if part.strip()))
     if not chosen or any(item not in ("cc", "github") for item in chosen):
         raise Refused("--sources must be a comma list of: cc, github")
+    if "github" in chosen:
+        try:
+            features.require_github("--sources github")
+        except features.FeatureDisabled as exc:
+            raise Refused(str(exc)) from None
     return chosen
 
 
@@ -118,7 +125,13 @@ def build_stages(args: argparse.Namespace) -> list[Stage]:
     stages: list[Stage] = []
     if not args.skip_acquisition:
         if "cc" in sources:
-            stages.append(Stage("cc_plan", "app.sources.commoncrawl.cli", ("plan",), env))
+            # Reference publishers first (claimed first: lower job priority), then a strictly filtered open sample.
+            profiles = ("reference", "open") if args.cc_profile == "both" else (args.cc_profile,)
+            for profile in profiles:
+                profile_env = {**env, "KB_CC_PROFILE": profile}
+                if profile == "open":
+                    profile_env["KB_CC_PARTITION_STRIDE"] = str(args.cc_open_stride)
+                stages.append(Stage(f"cc_plan_{profile}", "app.sources.commoncrawl.cli", ("plan",), profile_env))
             stages.append(Stage("cc_acquire_silver", "app.processing.silver.cli",
                                 ("work", "--source", "cc", "--max-iterations", str(args.cc_iterations)), env))
         if "github" in sources:
@@ -143,10 +156,15 @@ def build_stages(args: argparse.Namespace) -> list[Stage]:
 
 
 def check_target(identity: dict[str, Any], expect_database: str) -> None:
-    if expect_database != REQUIRED_DATABASE:
-        raise Refused(f"only --expect-database {REQUIRED_DATABASE} is permitted (got {expect_database!r})")
-    if identity["database"] != REQUIRED_DATABASE:
-        raise Refused(f"connected to database {identity['database']!r}; expected {REQUIRED_DATABASE!r}")
+    try:
+        expected = target.expected_database()
+    except target.TargetConfigError as exc:
+        raise Refused(str(exc)) from None
+    if expect_database != expected:
+        raise Refused(f"--expect-database {expect_database!r} differs from the configured expected database "
+                      f"{expected!r} ({target.ENV_NAME})")
+    if identity["database"] != expected:
+        raise Refused(f"connected to database {identity['database']!r}; expected {expected!r}")
     if identity["role"] != RUNTIME_ROLE:
         raise Refused(f"connected as {identity['role']!r}; expected {RUNTIME_ROLE}")
     if identity["revision"] != REQUIRED_REVISION:
@@ -341,13 +359,17 @@ def build_parser() -> argparse.ArgumentParser:
         return p
 
     run = common(sub.add_parser("run", help="source -> Gold, bounded, rerunnable"))
-    run.add_argument("--sources", default="cc,github", help="comma list: cc,github (default both)")
+    run.add_argument("--sources", default="cc", help="comma list: cc,github (default cc: Common Crawl only)")
+    run.add_argument("--cc-profile", choices=("reference", "open", "both"), default="both",
+                     help="reference: curated fact publishers; open: strictly filtered crawl sample (default both)")
+    run.add_argument("--cc-open-stride", type=int, default=50,
+                     help="open profile: plan every Nth eligible index partition (default 50)")
     run.add_argument("--cc-crawl", help="explicit crawl id, e.g. CC-MAIN-2013-20 (default: latest window)")
     run.add_argument("--cc-partitions", type=int, help="max index partitions per crawl")
     run.add_argument("--cc-blocks", type=int, default=1, help="CDX blocks (~3000 lines) per partition (default 1)")
     run.add_argument("--cc-max-record-bytes", type=int, help="max compressed WARC record size (smaller = compact pilot)")
     run.add_argument("--cc-mime", help="comma MIME list narrowing the candidate filter (default html+xhtml)")
-    run.add_argument("--cc-iterations", type=int, default=2, help="max partition jobs to run (default 2)")
+    run.add_argument("--cc-iterations", type=int, default=4, help="max partition jobs to run (default 4)")
     run.add_argument("--gh-windows", type=int, help="max creation-date discovery windows (newest first)")
     run.add_argument("--gh-max-files", type=int, help="max files per repository snapshot")
     run.add_argument("--gh-min-stars", type=int)

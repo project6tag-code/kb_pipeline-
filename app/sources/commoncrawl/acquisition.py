@@ -56,7 +56,8 @@ from app.queue.retry import JobFailure, RetryPolicy
 from app.queue.states import ErrorClass, Stage
 from app.sources.commoncrawl.bronze import BronzeConflict, BronzeCorrupt, BronzeStore, DiskSpaceError, UnsafePath
 from app.sources.commoncrawl.compression import CompressionError, decompress_single_member
-from app.sources.commoncrawl.config import AcquisitionConfig, FilterConfig
+from app.sources.commoncrawl.config import URL_POLICY_VERSION, AcquisitionConfig, FilterConfig
+from app.sources.commoncrawl.dates import DATE_EXTRACTOR_VERSION
 from app.sources.commoncrawl.discovery import CHECKPOINT_VERSION
 from app.sources.commoncrawl.http import FetchError, HttpClient
 from app.sources.commoncrawl.index import CdxRecord, IndexRowError, parse_cdx_line, rejection_reason, split_block_lines
@@ -95,6 +96,15 @@ def _invalid(message: str) -> JobFailure:
     return JobFailure(ErrorClass.DATA_INVALID, message, code="invalid_partition")
 
 
+def _dates_manifest(dates: Any) -> dict[str, Any]:
+    def iso(value: datetime | None) -> str | None:
+        return value.isoformat() if value else None
+
+    return {"version": DATE_EXTRACTOR_VERSION, "published_at": iso(dates.published_at),
+            "published_evidence": dates.published_evidence, "modified_at": iso(dates.modified_at),
+            "modified_evidence": dates.modified_evidence, "http_last_modified": iso(dates.http_last_modified)}
+
+
 def load_plan(job: ClaimedJob, config: AcquisitionConfig) -> PartitionPlan:
     """Rebuild and validate the partition from the job identity and its checkpoint."""
     match = _PARTITION.match(job.source_identifier)
@@ -110,7 +120,10 @@ def load_plan(job: ClaimedJob, config: AcquisitionConfig) -> PartitionPlan:
         filter_config = FilterConfig(mime_types=tuple(params["mime_types"]), languages=tuple(params["languages"]),
                                      reject_truncated=bool(params["reject_truncated"]),
                                      max_record_bytes=int(params["max_record_bytes"]),
-                                     required_status=int(params["status"]))
+                                     required_status=int(params["status"]), profile=str(params["profile"]),
+                                     reference_domains=tuple(params["reference_domains"]))
+        if params.get("url_policy") != URL_POLICY_VERSION:
+            raise ValueError(f"url policy {params.get('url_policy')!r} is not {URL_POLICY_VERSION!r}")
     except (KeyError, TypeError, ValueError) as exc:
         raise _invalid(f"checkpoint filter is invalid: {exc}") from None
     if filter_config.version != filter_version:
@@ -459,7 +472,8 @@ class CCPartitionHandler:
                      "payload_bytes": capture.payload_bytes, "headers": capture.warc_headers},
             "http": {"status": capture.http_status, "headers": capture.http_headers},
             "html_metadata": {"version": HTML_METADATA_VERSION, "title": capture.source_title,
-                              "canonical_url": capture.canonical_url},
+                              "canonical_url": capture.canonical_url,
+                              "dates": _dates_manifest(capture.page_dates)},
         }
 
     def _row(self, plan: PartitionPlan, item: LineItem, capture: WarcCapture, retrieved_at: datetime) -> CaptureRow:
@@ -471,7 +485,8 @@ class CCPartitionHandler:
             run_id=self.run_id, warc_record_id=capture.record_id, warc_date=capture.warc_date,
             http_status=capture.http_status, http_content_type=capture.http_content_type,
             detected_mime=record.mime_detected, redirect_location=capture.redirect_location,
-            canonical_url=capture.canonical_url, payload_digest=capture.payload_digest)
+            canonical_url=capture.canonical_url, payload_digest=capture.payload_digest,
+            page_dates=capture.page_dates)
 
     def _commit(self, ctx: JobContext, plan: PartitionPlan, progress: Progress, done: list[LineItem],
                 metrics: Counter, base: dict[str, Any], failed: LineItem | None) -> None:

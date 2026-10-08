@@ -1,9 +1,13 @@
-"""Chunking V1: structure-aware, deterministic chunking of accepted Silver documents.
+"""Chunking V1 (algorithm ``c2``): structure-aware, deterministic chunking of accepted Silver documents.
 
 Input: ``document_registry.canonical_text`` of an ``accepted`` document (plus
 its Silver kind). Output: ordered ``ChunkCandidate`` spans, each a CONTIGUOUS
-span ``[char_start, char_end)`` of that text, so that
-``canonicalize_text(text[char_start:char_end]) == chunk_text`` (schema §5.15).
+span ``[char_start, char_end)`` of that text. The chunk text is that span as
+PLAIN TEXT (``app.processing.chunking.plain``: no ``#``/``-``/``|``/``>`` markers,
+fences or inline Markdown), so that
+``canonicalize_text(plain.render(text[char_start:char_end], kind)) == chunk_text``
+(``c2``; ``c1`` stored the span verbatim, schema §5.15). The structure markers
+are still used for splitting; only the stored text is plain.
 Heading and table-header context is never injected into the chunk text; it is
 carried in ``section_path`` (the embedding stage may add it as an
 embedding-version prefix, schema §5.16).
@@ -38,12 +42,12 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from app.processing.chunking import tokenizer
+from app.processing.chunking import plain, tokenizer
 from app.processing.chunking.structure import TOP_LEVEL_CODE, Block, parse_blocks
 from app.processing.extraction.html import CHROME_PHRASES
 from app.processing.normalization.text import CANONICALIZATION_VERSION, canonicalize_text
 
-ALGORITHM_VERSION = "c1"
+ALGORITHM_VERSION = "c2"
 _SENTENCE_END = re.compile(r"[.!?][\"')\]]*(?=\s+[\"'(\[]?[A-Z0-9])")
 _CLAUSE_END = re.compile(r"[;:,](?=\s)")
 _LIST_START = re.compile(r"^ ?(?:[-*+•]|\d{1,9}[.)]) +\S")
@@ -96,6 +100,7 @@ class ChunkingConfig:
             "long_blocks": "sentence -> clause -> token boundary",
             "max_document_chars": self.max_document_chars,
             "max_chunks_per_document": self.max_chunks_per_document,
+            "chunk_text": f"plain text ({plain.PLAIN_RENDER_VERSION}): markers, fences and inline markup removed",
         }
 
     @property
@@ -355,7 +360,7 @@ def chunk_document(doc: str, *, kind: str = "prose", config: ChunkingConfig = Ch
     for ordinal, chunk in enumerate(chunks):
         span = _trimmed(doc, chunk.pieces[0].start, chunk.pieces[-1].end)
         start, end = span if span else (chunk.pieces[0].start, chunk.pieces[-1].end)
-        text = canonicalize_text(doc[start:end])
+        text = canonicalize_text(plain.render(doc[start:end], kind))
         tokens = tokenizer.count_tokens(text)
         covered = [b for b in blocks if b.start < end and start < b.end]
         candidate = ChunkCandidate(ordinal, start, end, text, tokens, chunk.path, chunk.pieces[0].table_header)

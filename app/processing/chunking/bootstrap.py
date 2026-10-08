@@ -3,7 +3,7 @@
 ``kb_pipeline_app`` has SELECT only on ``kbp.chunking_versions``
 (docs/database_privileges_v1.md §5.1). Registration is an idempotent operator
 step run with KB_MIGRATION_DATABASE_URL (``kb_pipeline_migrator``), refused
-unless the connection is on exactly ``--expect-database`` at revision kbp_001d.
+unless the connection is on exactly ``--expect-database`` at revision kbp_001e.
 The version ``name`` is derived from a hash of every output-affecting parameter,
 so a changed configuration is a NEW version; an existing name with different
 stored parameters is refused, never overwritten.

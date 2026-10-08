@@ -27,7 +27,7 @@ class Result:
 
 
 class FakeMetadataDatabase:
-    def __init__(self, *, database="kb_pipeline_test", role="postgres", superuser=True, revision="kbp_001d",
+    def __init__(self, *, database="kb_pipeline_test", role="postgres", superuser=True, revision="kbp_001e",
                  columns=None):
         self.database, self.role, self.superuser, self.revision = database, role, superuser, revision
         self.columns = list(columns or patch.BASE_COLUMNS)

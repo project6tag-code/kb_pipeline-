@@ -22,6 +22,7 @@ Outcome mapping (schema §5.11 / §5.12, D13):
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from collections.abc import Callable
 
@@ -33,9 +34,10 @@ from app.processing.extraction.html import HtmlDeadline, HtmlExtractionError, ex
 from app.processing.extraction.markdown import extract_markdown, extract_rst
 from app.processing.factuality import classifier as suitability
 from app.processing.language import detector
+from app.processing.normalization import encoding, markup, symbols
 from app.processing.normalization.text import CANONICALIZATION_VERSION, canonicalize_text
 from app.processing.privacy import pii, secrets
-from app.processing.quality import scorer, spam
+from app.processing.quality import page_type, scorer, spam
 from app.processing.silver import config as versions
 from app.processing.silver.bronze_reader import BronzeIntegrityError, Payload, read_common_crawl, read_github
 from app.processing.silver.config import SilverConfig
@@ -126,6 +128,12 @@ class SilverEvaluator:
         except DecodeError as exc:
             self._stop(ev, Gate.DECODE, FailureKind.PERMANENT_INVALID, exc.code, str(exc),
                        ExtractionOutcome.EXTRACTION_FAILED, versions.DECODER_VERSION)
+        if kind not in ("code", "config"):
+            decoded = dataclasses.replace(decoded, text=encoding.repair(decoded.text))  # mojibake -> real text
+            if encoding.corruption_count(decoded.text) > encoding.MAX_REMAINING:
+                self._stop(ev, Gate.DECODE, FailureKind.PERMANENT_INVALID, "encoding_corruption",
+                           "text still holds mojibake or replacement characters after repair",
+                           ExtractionOutcome.EXTRACTION_FAILED, versions.DECODER_VERSION)
         ev.add(GateResult(Gate.DECODE, Outcome.PASS, versions.DECODER_VERSION,
                           (f"{decoded.source}:{decoded.encoding}",), data={"replacements": decoded.replacements}))
 
@@ -165,6 +173,9 @@ class SilverEvaluator:
 
         # 11 locked canonicalization
         gate[0] = Gate.CANONICAL
+        if kind not in ("code", "config"):
+            text = markup.normalize(text)  # raw LaTeX / wiki markup -> readable text (exact readings only)
+            text = symbols.clean(text)  # emojis / decorative symbols out, before the identity-bearing text
         canonical = canonicalize_text(text)
         if not canonical:
             self._stop(ev, Gate.CANONICAL, FailureKind.POLICY_REJECT, "empty_canonical_text",
@@ -239,8 +250,13 @@ class SilverEvaluator:
         prose_words = len(prose_text.split()) if prose_text else 0
         gate[0] = Gate.NOISE
         noise = spam.check(final, features, kind=kind, min_words=policy.noise_min_words, link_ratio=link_ratio)
-        ev.add(GateResult(Gate.NOISE, Outcome.PASS if noise.passed else Outcome.FAIL, versions.NOISE_FILTER_VERSION,
-                          noise.reasons))
+        noise_reasons = noise.reasons
+        if ref.channel == "common_crawl":
+            declared = page_type.schema_types(decoded.text) if kind == "html" else frozenset()
+            page = page_type.check(ref.source_url, payload.title, final, features, declared)
+            noise_reasons = tuple(dict.fromkeys(noise_reasons + page.reasons))
+        ev.add(GateResult(Gate.NOISE, Outcome.FAIL if noise_reasons else Outcome.PASS, versions.NOISE_FILTER_VERSION,
+                          noise_reasons))
         gate[0] = Gate.QUALITY
         quality = scorer.score(features, kind=kind, threshold=policy.quality_threshold, prose_words=prose_words,
                                kept_ratio=kept_ratio)
@@ -258,7 +274,8 @@ class SilverEvaluator:
         gate[0] = Gate.DOMAIN
         dom = domain_mod.classify(final, min_evidence=policy.domain_min_evidence,
                                   min_confidence=policy.domain_min_confidence, multi_ratio=policy.domain_multi_ratio,
-                                  taxonomy=self.taxonomy)
+                                  taxonomy=self.taxonomy, title=payload.title,
+                                  url=ref.source_url if ref.channel == "common_crawl" else None)
         ev.add(GateResult(Gate.DOMAIN, Outcome.PASS, self.domain_version,
                           (dom.decision.lower(),) + dom.reasons, dom.confidence,
                           data={"label": dom.label, "domain": dom.domain, "subdomain": dom.subdomain}))

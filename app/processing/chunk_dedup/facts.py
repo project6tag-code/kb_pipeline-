@@ -1,4 +1,4 @@
-"""Fact-preservation guard for chunk near-duplicate decisions (``fg-v1``).
+"""Fact-preservation guard for chunk near-duplicate decisions (``fg-v2``).
 
 Two chunks may be NEAR_DUPLICATE only when their fact signatures are EQUAL.
 A signature is four sorted multisets extracted from the chunk body:
@@ -15,7 +15,11 @@ A signature is four sorted multisets extracted from the chunk body:
   ``before`` -> ``time-``). ``rose`` vs ``increased`` stays compatible;
   ``increased`` vs ``decreased`` does not.
 
-Heading lines (``#``) are context, not content, and are ignored. Markdown
+Heading lines are context, not content, and are ignored: ``#`` headings
+(chunking ``c1``) and, since ``fg-v2``, the plain title lines of chunking ``c2``
+plain-text chunks: a standalone line (blank line or chunk edge before and
+after) of at most 12 words, with no digit and no sentence-ending punctuation.
+A line with any digit is never skipped, so quantities stay guarded. Markdown
 emphasis, list markers and horizontal whitespace are neutralized, so CC prose
 and its GitHub markdown rendering get the same signature.
 
@@ -33,7 +37,9 @@ import json
 import re
 from dataclasses import dataclass
 
-FACT_GUARD_VERSION = "fg-v1"
+FACT_GUARD_VERSION = "fg-v2"
+TITLE_MAX_WORDS = 12
+_TITLE_END = ".!?:;,"
 
 _WORD = re.compile(r"\w+", re.UNICODE)
 _HSPACE = re.compile(r"[^\S\n]+")
@@ -161,8 +167,22 @@ def _unit(raw: str) -> str | None:
     return unit
 
 
+def _is_title(lines: list[str], i: int) -> bool:
+    """A plain-text section title of a c2 chunk: standalone, short, no digit, no sentence punctuation."""
+    line = lines[i].strip()
+    if not line or line[-1] in _TITLE_END or any(ch.isdigit() for ch in line):
+        return False
+    if len(line.split()) > TITLE_MAX_WORDS:
+        return False
+    before = i == 0 or not lines[i - 1].strip()
+    after = i == len(lines) - 1 or not lines[i + 1].strip()
+    return before and after
+
+
 def _body(text: str) -> str:
-    lines = [_LIST_MARKER.sub("", line) for line in text.split("\n") if not line.lstrip().startswith("#")]
+    raw = text.split("\n")
+    lines = [_LIST_MARKER.sub("", line) for i, line in enumerate(raw)
+             if not line.lstrip().startswith("#") and not _is_title(raw, i)]
     return _HSPACE.sub(" ", _EMPHASIS.sub("", "\n".join(lines)))
 
 

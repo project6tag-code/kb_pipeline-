@@ -87,6 +87,9 @@ def run_github_worker(*, max_iterations: int | None = None, recover_every: int =
 
     Requires KB_DATABASE_URL (kb_pipeline_app); KB_GH_TOKEN is optional (never logged).
     """
+    from app.config import features
+
+    features.require_github("The GitHub worker")  # release guard: Common Crawl only
     from app.sources.github.config import GitHubSettings
     from app.sources.github.connector import build_client as build_gh_client
     from app.sources.github.connector import register_github_handlers

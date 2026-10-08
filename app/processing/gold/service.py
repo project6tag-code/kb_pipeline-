@@ -1,4 +1,11 @@
-"""Psycopg-native Gold Publisher V1 service (no model inference, insert-only Gold)."""
+"""Psycopg-native Gold Publisher V2 service (no model inference, insert-only Gold).
+
+V2 (docs/cc_fact_kb_v2.md): ``public.metadata.source_id`` is the original source
+document (``app.processing.gold.source_document``), registered as one
+``KB_SOURCE_DOCUMENT`` row in ``public.datasets``; ``published_at``,
+``updated_at`` and ``crawled_at`` are always set. Per chunk, one transaction:
+datasets (once per document) -> metadata -> kb -> gold_publications.
+"""
 
 from __future__ import annotations
 
@@ -16,15 +23,18 @@ from typing import Any
 
 import psycopg
 
+from app.config import target
+
 from app.processing.chunk_dedup import eligibility, method
 from app.processing.embedding import model as embedding_model
 from app.processing.gold_bridge import bootstrap as gold_bridge
 from app.processing.gold import repository as sql
+from app.processing.gold import source_document
 from app.queue.retry import RetryPolicy, jittered_backoff
 from app.queue.states import RunKind, RunStatus
 
-REQUIRED_DATABASE = "kb_pipeline_test"
-REQUIRED_REVISION = "kbp_001d"
+REQUIRED_DATABASE = target.DEFAULT_DATABASE  # default only; the enforced name is KB_EXPECTED_DATABASE
+REQUIRED_REVISION = "kbp_001e"
 RUNTIME_ROLE = "kb_pipeline_app"
 MIGRATOR_ROLE = "kb_pipeline_migrator"
 MODEL_ID = 2
@@ -50,12 +60,17 @@ def _mapping(row: Any) -> dict[str, Any]:
 
 
 def verify_target(conn: Any, expect_database: str, *, role: str) -> dict[str, Any]:
-    if expect_database != REQUIRED_DATABASE:
-        raise GoldPublisherError(f"only --expect-database {REQUIRED_DATABASE} is permitted")
+    try:
+        expected = target.expected_database()
+    except target.TargetConfigError as exc:
+        raise GoldPublisherError(str(exc)) from None
+    if expect_database != expected:
+        raise GoldPublisherError(f"--expect-database {expect_database!r} differs from the configured expected "
+                                 f"database {expected!r} ({target.ENV_NAME})")
     row = conn.execute(sql.IDENTITY_SQL).fetchone()
     actual = _mapping(row)
-    if actual["database"] != REQUIRED_DATABASE:
-        raise GoldPublisherError(f"connected to database {actual['database']!r}; expected {REQUIRED_DATABASE!r}")
+    if actual["database"] != expected:
+        raise GoldPublisherError(f"connected to database {actual['database']!r}; expected {expected!r}")
     if actual["role"] != role:
         raise GoldPublisherError(f"connected as {actual['role']!r}; expected {role}")
     if actual["revision"] != REQUIRED_REVISION:
@@ -218,6 +233,7 @@ def preflight_public_schema(conn: Any) -> None:
         ("source_url", "text", False), ("source_title", "text", False),
         ("source_type", "character varying(50)", False),
         ("published_at", "timestamp with time zone", False), ("updated_at", "timestamp with time zone", False),
+        ("crawled_at", "timestamp with time zone", False),
     )
     metadata = conn.execute(
         "SELECT a.attname, pg_catalog.format_type(a.atttypid,a.atttypmod), a.attnotnull "
@@ -225,16 +241,19 @@ def preflight_public_schema(conn: Any) -> None:
         "AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum"
     ).fetchall()
     if tuple((row["attname"], row["format_type"], row["attnotnull"]) for row in metadata) != metadata_expected:
-        raise GoldPublisherError("public.metadata schema differs from the locked eight-column Gold contract")
+        raise GoldPublisherError("public.metadata schema differs from the Gold V2 contract (eight columns + crawled_at;"
+                                 " run scripts/db/admin_gold_v2_patch.sql)")
     kb = conn.execute(
         "SELECT a.attname, pg_catalog.format_type(a.atttypid,a.atttypmod), a.attnotnull "
         "FROM pg_catalog.pg_attribute a WHERE a.attrelid='public.kb'::regclass "
         "AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum"
     ).fetchall()
     if tuple((row["attname"], row["format_type"], row["attnotnull"]) for row in kb) != (
-        ("id", "uuid", True), ("chunk", "text", True), ("embedding", "vector(768)", False)
+        ("id", "uuid", True), ("chunk", "text", True), ("embedding", "vector(768)", False),
+        ("source_id", "uuid", False),
     ):
-        raise GoldPublisherError("public.kb schema differs from the locked Gold contract")
+        raise GoldPublisherError("public.kb schema differs from the Gold V2 contract (id, chunk, embedding + source_id;"
+                                 " run scripts/db/admin_gold_v2_patch.sql)")
     constraints = conn.execute(
         "SELECT conname, contype, pg_catalog.pg_get_constraintdef(oid), condeferrable, confupdtype, confdeltype "
         "FROM pg_catalog.pg_constraint WHERE conrelid='public.kb'::regclass ORDER BY conname"
@@ -249,22 +268,39 @@ def preflight_public_schema(conn: Any) -> None:
         raise GoldPublisherError("public.kb PK/FK contract differs from the documented non-deferrable metadata FK")
 
 
-def validate_provenance(row: Mapping[str, Any]) -> dict[str, Any]:
+def validate_provenance(row: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Expected ``public.metadata`` and ``public.datasets`` rows for one representative chunk."""
     channel = row["source_channel"]
     if channel not in SOURCE_CHANNELS:
         raise GoldPublisherError(f"unsupported representative provenance channel {channel!r}")
     source_url = row["source_url"]
     if not isinstance(source_url, str) or not source_url:
         raise GoldPublisherError(f"chunk {row['chunk_id']} has no representative source URL")
-    return {
+    try:
+        source_id = source_document.source_document_id(row)
+        dates = source_document.gold_dates(row)
+    except source_document.SourceDocumentError as exc:
+        raise GoldPublisherError(str(exc)) from None
+    if source_id in bridge_dataset_ids():
+        raise GoldPublisherError(f"chunk {row['chunk_id']}: source id collides with a channel bridge dataset")
+    metadata = {
         "id": row["chunk_id"],
+        "source_id": source_id,
         "source_url": source_url,
         "source_title": row["source_title"],
-        "source_type": channel,
+        "source_type": source_document.document_type(row),  # real document type; the channel is in the dataset row
         "domain": row["subject_domain"],
-        "published_at": row["source_published_at"],
-        "updated_at": None,
+        "published_at": dates["published_at"],
+        "updated_at": dates["updated_at"],
+        "crawled_at": dates["crawled_at"],
     }
+    return metadata, source_document.dataset_row(row, source_id, dates)
+
+
+def bridge_dataset_ids() -> set[uuid.UUID]:
+    from app.processing.gold_bridge import spec as bridge_spec
+
+    return set(bridge_spec.FROZEN_DATASET_IDS.values())
 
 
 def validate_vector_row(row: Mapping[str, Any] | None) -> tuple[str, bytes]:
@@ -290,22 +326,34 @@ def validate_vector_row(row: Mapping[str, Any] | None) -> tuple[str, bytes]:
     return row["embedding_text"], wire
 
 
-def _same_metadata(actual: Mapping[str, Any], expected: Mapping[str, Any], source_id: uuid.UUID) -> bool:
-    return all(actual[key] == value for key, value in {
-        "id": expected["id"], "source_id": source_id, "source_url": expected["source_url"],
-        "source_title": expected["source_title"], "source_type": expected["source_type"],
-        "domain": expected["domain"], "published_at": expected["published_at"],
-        "updated_at": expected["updated_at"],
-    }.items())
+METADATA_FIELDS = ("id", "source_id", "source_url", "source_title", "source_type", "domain", "published_at",
+                   "updated_at", "crawled_at")
 
 
-def _same_kb(actual: Mapping[str, Any], chunk_id: uuid.UUID, chunk_text: str, wire: bytes) -> bool:
-    return actual["id"] == chunk_id and actual["chunk"] == chunk_text and bytes(actual["embedding_wire"]) == wire
+def _same_metadata(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    return all(actual[key] == expected[key] for key in METADATA_FIELDS)
+
+
+def _json_normal(value: Any) -> Any:
+    return json.loads(json.dumps(value, sort_keys=True, default=str))
+
+
+def _same_dataset(actual: Mapping[str, Any], expected: Mapping[str, Any]) -> bool:
+    return (actual["id"] == expected["id"] and actual["source_id"] == expected["source_id"]
+            and actual["dataset_name"] == expected["dataset_name"] and actual["status"] == expected["status"]
+            and _json_normal(actual["metadata"]) == _json_normal(expected["metadata"]))
+
+
+def _same_kb(actual: Mapping[str, Any], chunk_id: uuid.UUID, source_id: uuid.UUID, chunk_text: str,
+             wire: bytes) -> bool:
+    """``kb.id`` is the unique chunk id; ``kb.source_id`` the shared original-document id (= metadata.source_id)."""
+    return (actual["id"] == chunk_id and actual["source_id"] == source_id and actual["chunk"] == chunk_text
+            and bytes(actual["embedding_wire"]) == wire)
 
 
 def classify_existing_gold(metadata: Mapping[str, Any] | None, kb: Mapping[str, Any] | None,
                             ledger: Mapping[str, Any] | None, *, expected_metadata: Mapping[str, Any],
-                            source_id: uuid.UUID, chunk_id: uuid.UUID, chunk_text: str,
+                            chunk_id: uuid.UUID, chunk_text: str,
                             vector_wire: bytes, model_id: int = MODEL_ID) -> str:
     """Return absent/reused or refuse any partial or immutable-field conflict."""
     present = (metadata is not None, kb is not None, ledger is not None)
@@ -313,9 +361,9 @@ def classify_existing_gold(metadata: Mapping[str, Any] | None, kb: Mapping[str, 
         return "absent"
     if not all(present):
         raise GoldConflict(f"partial Gold state for {chunk_id}: metadata/kb/ledger presence={present}")
-    if not _same_metadata(metadata, expected_metadata, source_id):
+    if not _same_metadata(metadata, expected_metadata):
         raise GoldConflict(f"public.metadata for {chunk_id} differs from deterministic representative provenance")
-    if not _same_kb(kb, chunk_id, chunk_text, vector_wire):
+    if not _same_kb(kb, chunk_id, expected_metadata["source_id"], chunk_text, vector_wire):
         raise GoldConflict(f"public.kb for {chunk_id} differs from canonical text or exact shadow vector bytes")
     if ledger["chunk_id"] != chunk_id or int(ledger["embedding_model_id"]) != model_id:
         raise GoldConflict(f"gold_publications ledger row for {chunk_id} has an unexpected identity")
@@ -345,11 +393,20 @@ def publish_one(conn: Any, *, chunk_id: uuid.UUID, method_id: int, run_id: uuid.
     if source is None:
         raise GoldPublisherError(f"chunk {chunk_id} has no canonical chunk/document/representative observation")
     source_row = _mapping(source)
-    expected_metadata = validate_provenance(source_row)
-    dataset_id = gold_bridge.resolve_dataset_id(conn, source_row["source_channel"])
+    expected_metadata, expected_dataset = validate_provenance(source_row)
 
     vector_row = conn.execute(sql.SHADOW_VECTOR_SQL, (chunk_id, MODEL_ID)).fetchone()
     embedding_text, expected_wire = validate_vector_row(None if vector_row is None else _mapping(vector_row))
+
+    # The source-document dataset row is shared by every chunk of the document: insert once, verify always.
+    dataset_existing = conn.execute(sql.DATASET_GET_SQL, (expected_dataset["id"],)).fetchone()
+    if dataset_existing is None:
+        conn.execute(sql.DATASET_INSERT_SQL, (
+            expected_dataset["id"], expected_dataset["source_id"], expected_dataset["dataset_name"],
+            expected_dataset["status"], json.dumps(expected_dataset["metadata"], sort_keys=True, default=str)))
+        dataset_existing = conn.execute(sql.DATASET_GET_SQL, (expected_dataset["id"],)).fetchone()
+    if dataset_existing is None or not _same_dataset(_mapping(dataset_existing), expected_dataset):
+        raise GoldConflict(f"public.datasets source document {expected_dataset['id']} differs from its provenance")
 
     metadata_existing = conn.execute(sql.METADATA_GET_SQL, (chunk_id,)).fetchone()
     kb_existing = conn.execute(sql.KB_GET_SQL, (chunk_id,)).fetchone()
@@ -357,25 +414,23 @@ def publish_one(conn: Any, *, chunk_id: uuid.UUID, method_id: int, run_id: uuid.
     ledger_mapping = None if ledger_existing is None else _mapping(ledger_existing)
     state = classify_existing_gold(None if metadata_existing is None else _mapping(metadata_existing),
                                    None if kb_existing is None else _mapping(kb_existing), ledger_mapping,
-                                   expected_metadata=expected_metadata, source_id=dataset_id, chunk_id=chunk_id,
+                                   expected_metadata=expected_metadata, chunk_id=chunk_id,
                                    chunk_text=source_row["chunk_text"], vector_wire=expected_wire)
     if state == "reused":
         return {"chunk_id": str(chunk_id), "action": "reused", "source_type": expected_metadata["source_type"]}
 
-    conn.execute(sql.METADATA_INSERT_SQL, (
-        chunk_id, dataset_id, expected_metadata["source_url"], expected_metadata["source_title"],
-        expected_metadata["source_type"], expected_metadata["domain"], expected_metadata["published_at"],
-        expected_metadata["updated_at"],
-    ))
+    conn.execute(sql.METADATA_INSERT_SQL, tuple(expected_metadata[key] for key in METADATA_FIELDS))
     _injected(failure_hook, "after_metadata", chunk_id)
     metadata_after = conn.execute(sql.METADATA_GET_SQL, (chunk_id,)).fetchone()
-    if metadata_after is None or not _same_metadata(_mapping(metadata_after), expected_metadata, dataset_id):
+    if metadata_after is None or not _same_metadata(_mapping(metadata_after), expected_metadata):
         raise GoldConflict(f"public.metadata insert for {chunk_id} did not verify")
 
-    conn.execute(sql.KB_INSERT_SQL, (chunk_id, source_row["chunk_text"], embedding_text))
+    source_id = expected_metadata["source_id"]
+    conn.execute(sql.KB_INSERT_SQL, (chunk_id, source_id, source_row["chunk_text"], embedding_text))
     _injected(failure_hook, "after_kb", chunk_id)
     kb_after = conn.execute(sql.KB_GET_SQL, (chunk_id,)).fetchone()
-    if kb_after is None or not _same_kb(_mapping(kb_after), chunk_id, source_row["chunk_text"], expected_wire):
+    if kb_after is None or not _same_kb(_mapping(kb_after), chunk_id, source_id, source_row["chunk_text"],
+                                        expected_wire):
         raise GoldConflict(f"public.kb insert for {chunk_id} did not verify against the shadow vector bytes")
 
     _injected(failure_hook, "before_ledger", chunk_id)
@@ -476,7 +531,7 @@ def run_publisher(conn: Any, *, expect_database: str, limit: int = 100_000, batc
     bridges = _validate_bridges(conn)
     baseline = {key: value for key, value in conn.execute(sql.STATE_COUNTS_SQL).fetchone().items()}
     gold_before = _audit_gold(conn, method_id)
-    run_notes = json.dumps({"device": "not_applicable_copy_shadow", "gold_publisher": "v1",
+    run_notes = json.dumps({"device": "not_applicable_copy_shadow", "gold_publisher": "v2",
                             "model_id": MODEL_ID, "embedding_version": embedding_model.EMBEDDING_VERSION,
                             "eligible": shadow_audit["eligible"]}, sort_keys=True)
     with conn.transaction():
@@ -505,14 +560,14 @@ def run_publisher(conn: Any, *, expect_database: str, limit: int = 100_000, batc
         expected_rows = min(shadow_audit["eligible"], gold_before["ledger_rows"] + created)
         if after["ledger_rows"] != expected_rows:
             raise GoldPublisherError("published Gold row count does not equal eligible representative count")
-        final_notes = json.dumps({"gold_publisher": "v1", "attempted": attempted, "created": created,
+        final_notes = json.dumps({"gold_publisher": "v2", "attempted": attempted, "created": created,
                                   "reused": reused, "source_type_counts": dict(by_source)}, sort_keys=True)
         with conn.transaction():
             _finish_run(conn, run_id, RunStatus.SUCCEEDED.value, final_notes)
     except BaseException as exc:
         with conn.transaction():
             _finish_run(conn, run_id, RunStatus.FAILED.value,
-                        json.dumps({"gold_publisher": "v1", "error": type(exc).__name__, "message": str(exc)},
+                        json.dumps({"gold_publisher": "v2", "error": type(exc).__name__, "message": str(exc)},
                                    sort_keys=True))
         raise
     final_counts = {key: value for key, value in conn.execute(sql.STATE_COUNTS_SQL).fetchone().items()}

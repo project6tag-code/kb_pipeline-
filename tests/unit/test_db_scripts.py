@@ -355,7 +355,7 @@ class Migration001BVerificationScriptTests(unittest.TestCase):
 
     def test_refuses_any_database_other_than_the_test_database(self) -> None:
         self.assertIn("current_database() <> 'kb_pipeline_test'", self.TEXT)
-        self.assertIn("version_num IN ('kbp_001b', 'kbp_001c', 'kbp_001d')", self.TEXT)
+        self.assertIn("version_num IN ('kbp_001b', 'kbp_001c', 'kbp_001d', 'kbp_001e')", self.TEXT)
 
     def test_verifies_schema_keys_fks_indexes_ownership_and_runtime_privileges(self) -> None:
         for token in (
@@ -375,7 +375,7 @@ class GoldSchemaVerificationScriptTests(unittest.TestCase):
 
     def test_migration_verifier_is_targeted_read_only_and_checks_revision(self) -> None:
         self.assertIn("current_database() <> 'kb_pipeline_test'", self.MIGRATION)
-        self.assertIn("version_num = 'kbp_001d'", self.MIGRATION)
+        self.assertIn("version_num IN ('kbp_001d', 'kbp_001e')", self.MIGRATION)
         self.assertIn("gold_publications", self.MIGRATION)
         self.assertTrue(self.MIGRATION.rstrip().endswith("ROLLBACK;"))
 
@@ -694,3 +694,86 @@ class ProvisioningScriptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GoldV2AdminScriptTests(unittest.TestCase):
+    PATCH = read("admin_gold_v2_patch.sql")
+    RESET = read("admin_reset_kb_pipeline_test.sql")
+
+    def test_patch_is_targeted_additive_and_least_privilege(self) -> None:
+        code = re.sub(r"'[^']*'", "''", re.sub(r"--[^\n]*", "", sql_only(self.PATCH))).lower()
+        self.assertIn("current_database() <> 'kb_pipeline_test'", self.PATCH)
+        self.assertIn("version_num = 'kbp_001e'", self.PATCH)
+        self.assertIn("alter table public.metadata add column if not exists crawled_at timestamptz", code)
+        self.assertIn("alter table public.kb add column if not exists source_id uuid;", code)
+        self.assertIn("grant select, insert on table public.datasets to kb_pipeline_app", code)
+        self.assertIn("grant select (crawled_at) on table public.metadata to kb_pipeline_app", code)
+        self.assertIn("has_column_privilege('kb_pipeline_app', 'public.metadata', 'crawled_at', 'select')",
+                      self.PATCH.lower())
+        self.assertNotRegex(code, r"\b(drop|delete|truncate|update|revoke)\b")
+        self.assertNotRegex(code, r"grant [^;]*(update|delete|all)")
+        self.assertNotRegex(code, r"alter table public\.(datasets|dataset_sources)\b")
+        # exactly two additive, nullable, default-free, constraint-free columns
+        self.assertEqual(re.findall(r"alter table public\.(\w+) ([^;]*);", code),
+                         [("metadata", "add column if not exists crawled_at timestamptz"),
+                          ("kb", "add column if not exists source_id uuid")])
+        self.assertNotRegex(code, r"\b(not null|default|references|constraint|foreign key)\b")
+        self.assertIn("'id:uuid:true,chunk:text:true,embedding:vector(768):false,source_id:uuid:false'",
+                      self.PATCH)
+
+    def test_reset_requires_confirmation_and_keeps_registrations(self) -> None:
+        self.assertIn("confirm=RESET_KB_PIPELINE_TEST", self.RESET)
+        self.assertIn("\\quit 3", self.RESET)
+        self.assertIn("current_database() <> 'kb_pipeline_test'", self.RESET)
+        truncate = re.search(r"TRUNCATE TABLE(.*?)RESTART IDENTITY", self.RESET, re.S).group(1)
+        for kept in ("dedup_methods", "chunking_versions", "embedding_models", "source_dataset_map",
+                     "public.datasets", "dataset_sources", "alembic_version"):
+            with self.subTest(kept=kept):
+                self.assertNotIn(kept, truncate)
+        self.assertIn("DELETE FROM public.datasets WHERE status = 'KB_SOURCE_DOCUMENT'", self.RESET)
+
+    def test_admin_scripts_hold_no_secrets(self) -> None:
+        for text in (self.PATCH, self.RESET):
+            self.assertNotRegex(text.lower(), r"password\s*=|postgresql://[^@\s]*:[^@\s]*@")
+
+
+class BootstrapPublicTablesTests(unittest.TestCase):
+    """scripts/db/bootstrap_public_tables.sql: clean-machine DDL, identical to the validated V2 layout."""
+
+    SQL = read("bootstrap_public_tables.sql")
+    PATCH = read("admin_gold_v2_patch.sql")
+    DDL = SQL.split("-- BEGIN-DDL")[1].split("-- END-DDL")[0]
+
+    def test_four_tables_in_foreign_key_order_and_idempotent(self) -> None:
+        tables = re.findall(r"CREATE TABLE IF NOT EXISTS public\.(\w+)", self.DDL)
+        self.assertEqual(tables, ["dataset_sources", "datasets", "metadata", "kb"])
+        self.assertEqual(self.DDL.count("CREATE TABLE"), 4)
+        for name in ("dataset_sources_pkey", "uq_dataset_sources_name", "datasets_pkey", "datasets_source_id_fkey",
+                     "metadata_pkey", "metadata_source_id_fkey", "kb_pkey", "kb_id_fkey"):
+            self.assertIn(f"CONSTRAINT {name}", self.DDL)
+        self.assertIn("FOREIGN KEY (id) REFERENCES public.metadata (id) ON DELETE CASCADE", self.DDL)
+        self.assertIn("embedding public.vector(768),", self.DDL)
+
+    def test_layout_equals_what_the_gold_v2_patch_and_publisher_expect(self) -> None:
+        for table in ("metadata", "kb"):
+            pattern = rf"'{table}', '([^']+)'"
+            mine = re.search(pattern, self.SQL.split("expected_columns")[1]).group(1)
+            self.assertIn(mine, self.PATCH.replace("'\n          '", ""), table)  # same column strings as the patch verifier
+        # physical metadata order required by the publisher preflight
+        self.assertEqual(re.findall(r"^\s+(\w+) ", self.DDL.split("CREATE TABLE IF NOT EXISTS public.metadata")[1]
+                                    .split("CONSTRAINT metadata_pkey")[0], re.M),
+                         ["id", "source_id", "domain", "source_url", "source_title", "source_type", "published_at",
+                          "updated_at", "crawled_at"])
+
+    def test_no_privileges_data_or_destructive_statements(self) -> None:
+        code = re.sub(r"'[^']*'", "''", re.sub(r"--[^\n]*", "", sql_only(self.SQL))).lower()
+        code = code.replace("on delete cascade", "")  # the validated kb -> metadata foreign key action
+        self.assertNotRegex(code, r"\b(grant|revoke|drop|delete|truncate|update|insert|alter)\b")
+        self.assertNotRegex(self.DDL.lower(), r"\bdefault\b|\bcreate index\b|\btrigger\b")
+        self.assertIn("rolsuper", self.SQL)                       # superuser-only
+        self.assertIn("never runs as a pipeline role", self.SQL)
+        self.assertIn("'data_collection_pipeline'", self.SQL)    # protected database refused
+        self.assertTrue(self.SQL.rstrip().endswith("public tables bootstrap: OK (dataset_sources, datasets, metadata, kb in the Gold V2 layout)'"))
+
+    def test_no_secrets(self) -> None:
+        self.assertNotRegex(self.SQL.lower(), r"password\s*=|postgresql://[^@\s]*:[^@\s]+@")

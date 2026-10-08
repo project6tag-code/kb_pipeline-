@@ -2,13 +2,18 @@
 
 Uses exactly the Schema V1 tables and the grants of
 docs/database_privileges_v1.md §5.1: INSERT (never UPDATE or DELETE) on
-``cc_crawls``, ``cc_warc_files``, ``source_observations`` and ``cc_captures``;
-dead letters and rate limits through ``app.db.repositories``.
+``cc_crawls``, ``cc_warc_files``, ``source_observations`` and ``cc_captures``,
+plus ``source_dates`` (Migration 001E); dead letters and rate limits through
+``app.db.repositories``.
+
+``source_observations.source_published_at`` holds only a publication date the
+page itself declared (``app.sources.commoncrawl.dates``), or NULL.
 
 Conflict targets follow schema §20:
 * ``cc_crawls (crawl_id)``: DO NOTHING
 * ``cc_warc_files (warc_filename)``: DO NOTHING, then SELECT the id
 * ``source_observations (observation_id)``: DO NOTHING
+* ``source_dates (observation_id)``: DO NOTHING
 * ``cc_captures (observation_id)``: DO NOTHING; the natural key
   UNIQUE (warc_file_id, warc_record_offset) is deliberately left to raise
   (a derivation bug must fail loudly, schema §19).
@@ -27,6 +32,7 @@ from typing import Any, Protocol
 
 from app.db import repositories
 from app.queue.states import DeadLetterItemType, Disposition, ErrorClass, SourceChannel, Stage
+from app.sources.commoncrawl.dates import DATE_EXTRACTOR_VERSION, PageDates
 from app.utils.time import ensure_utc
 
 INDEX_KIND = "cdx"
@@ -63,7 +69,8 @@ SELECT observation_id FROM kbp.cc_captures WHERE observation_id = ANY (CAST(:obs
 INSERT_OBSERVATION_SQL = """
 INSERT INTO kbp.source_observations (observation_id, source_channel, source_url, url_host, source_title,
                                      source_published_at, acquired_at, run_id)
-VALUES (:observation_id, 'common_crawl', :source_url, :url_host, :source_title, NULL, :acquired_at, :run_id)
+VALUES (:observation_id, 'common_crawl', :source_url, :url_host, :source_title, :source_published_at, :acquired_at,
+        :run_id)
 ON CONFLICT (observation_id) DO NOTHING
 RETURNING observation_id
 """
@@ -76,6 +83,14 @@ VALUES (:observation_id, :warc_file_id, :warc_record_offset, :warc_record_length
         :http_status, :http_content_type, :detected_mime, :redirect_location, :canonical_url, :payload_digest)
 ON CONFLICT (observation_id) DO NOTHING
 RETURNING observation_id
+"""
+
+INSERT_SOURCE_DATES_SQL = """
+INSERT INTO kbp.source_dates (observation_id, extractor_version, published_at, published_evidence, modified_at,
+                              modified_evidence, http_last_modified, crawled_at, recorded_at)
+VALUES (:observation_id, :extractor_version, :published_at, :published_evidence, :modified_at, :modified_evidence,
+        :http_last_modified, :crawled_at, now())
+ON CONFLICT (observation_id) DO NOTHING
 """
 
 PARTITION_SUMMARY_SQL = """
@@ -121,9 +136,12 @@ class CaptureRow:
     redirect_location: str | None
     canonical_url: str | None
     payload_digest: str | None
+    page_dates: PageDates = PageDates(None, None, None, None, None)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "acquired_at", ensure_utc(self.acquired_at))
+        if self.warc_record_id is None or self.warc_date is None:
+            raise ValueError("a capture needs its WARC-Record-ID and WARC-Date (source identity and crawl date)")
         for name in ("source_url", "url_host", "source_title", "http_content_type", "detected_mime",
                      "redirect_location", "canonical_url", "payload_digest"):
             value = getattr(self, name)
@@ -180,7 +198,8 @@ class PostgresCaptureStore:
         file_id = self.warc_file_id(conn, row.crawl_id, row.warc_filename)
         conn.execute(_text(INSERT_OBSERVATION_SQL), {
             "observation_id": row.observation_id, "source_url": row.source_url, "url_host": row.url_host,
-            "source_title": row.source_title, "acquired_at": row.acquired_at, "run_id": row.run_id})
+            "source_title": row.source_title, "source_published_at": row.page_dates.published_at,
+            "acquired_at": row.acquired_at, "run_id": row.run_id})
         inserted = conn.execute(_text(INSERT_CAPTURE_SQL), {
             "observation_id": row.observation_id, "warc_file_id": file_id,
             "warc_record_offset": row.warc_record_offset, "warc_record_length": row.warc_record_length,
@@ -188,6 +207,12 @@ class PostgresCaptureStore:
             "http_content_type": row.http_content_type, "detected_mime": row.detected_mime,
             "redirect_location": row.redirect_location, "canonical_url": row.canonical_url,
             "payload_digest": row.payload_digest}).one_or_none()
+        dates = row.page_dates
+        conn.execute(_text(INSERT_SOURCE_DATES_SQL), {
+            "observation_id": row.observation_id, "extractor_version": DATE_EXTRACTOR_VERSION,
+            "published_at": dates.published_at, "published_evidence": dates.published_evidence,
+            "modified_at": dates.modified_at, "modified_evidence": dates.modified_evidence,
+            "http_last_modified": dates.http_last_modified, "crawled_at": row.warc_date})
         return inserted is not None
 
     def record_item_dead_letter(self, conn: Any, *, item_key: str, stage: Stage, error_class: ErrorClass,

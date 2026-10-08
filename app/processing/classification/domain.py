@@ -36,8 +36,32 @@ from collections import Counter
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
-VERSION = "dom1"
+VERSION = "dom3"  # dom2 + ambiguous software words down-weighted, URL slug evidence, health-publisher prior
+TITLE_BOOST = 3
+# Single words that appear in almost every domain's vocabulary ("system", "state", "life", "element", ...):
+# alone they say little about the subject, so their evidence counts a quarter. Multi-word phrases and every
+# other keyword keep full weight.
+GENERIC_WEIGHT = 0.25
+GENERIC_WORDS = frozenset({
+    "state", "system", "design", "life", "element", "capital", "space", "team", "code", "library", "application",
+    "market", "region", "country", "force", "mass", "energy", "cell", "language", "art", "era", "company",
+    "organization", "policy", "treatment",
+    # dom3: words that are Software keywords in the taxonomy but everyday vocabulary in statistics, survey and
+    # data documentation ("class variable", "table", "index", "test", "function", "object")
+    "variable", "function", "class", "object", "table", "index", "query", "test", "tests", "testing", "join",
+    "schema", "process", "thread", "branch", "merge", "commit", "coverage", "container", "server", "cloud",
+    "pipeline", "mock", "assert", "transaction", "repository", "kernel", "syntax",
+})
+URL_BOOST = 2          # words of the URL path (slug) count like a heading word, twice
+HOST_PRIOR = 3.0       # below min_evidence (4.0): a publisher alone never assigns a domain, it only tips the balance
+# Publishers whose whole site is one subject. Longest-suffix host match; the domain must exist in the taxonomy.
+HOST_PRIORS = {
+    "cdc.gov": "Medicine and Health", "nih.gov": "Medicine and Health", "medlineplus.gov": "Medicine and Health",
+    "who.int": "Medicine and Health", "nhs.uk": "Medicine and Health", "mayoclinic.org": "Medicine and Health",
+    "fda.gov": "Medicine and Health", "cancer.gov": "Medicine and Health",
+}
 DEFAULT_TAXONOMY = Path(__file__).with_name("taxonomy_v1.json")
 ASSIGNED, MULTI, UNKNOWN = "ASSIGNED", "MULTI", "UNKNOWN"
 
@@ -126,20 +150,54 @@ def _evidence(keywords: tuple[tuple[str, ...], ...], counts: Counter, scale: flo
     for phrase in keywords:
         c = counts.get(phrase, 0)
         if c:
-            total += scale * (1 + 0.5 * (len(phrase) - 1)) * (1 + math.log(c))
+            weight = GENERIC_WEIGHT if len(phrase) == 1 and phrase[0] in GENERIC_WORDS else 1.0
+            total += scale * weight * (1 + 0.5 * (len(phrase) - 1)) * (1 + math.log(c))
     return total
 
 
+def _title_ngrams(title: str | None) -> Counter:
+    counts: Counter = Counter()
+    tokens = _tokens(title or "")
+    for n in (1, 2, 3):
+        counts.update(tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1))
+    return counts
+
+
+def _url_parts(url: str | None) -> tuple[str, str]:
+    """(lower-cased host without ``www.``, path text) of ``url``; empty strings when unusable."""
+    if not url:
+        return "", ""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "", ""
+    return (parts.hostname or "").lower().removeprefix("www."), unquote(parts.path).replace("/", " ")
+
+
+def _host_prior(host: str) -> str | None:
+    best = max((suffix for suffix in HOST_PRIORS if host == suffix or host.endswith("." + suffix)),
+               key=len, default=None)
+    return HOST_PRIORS[best] if best else None
+
+
 def classify(text: str, *, min_evidence: float, min_confidence: float, multi_ratio: float,
-             taxonomy: Taxonomy | None = None) -> DomainResult:
+             taxonomy: Taxonomy | None = None, title: str | None = None, url: str | None = None) -> DomainResult:
     taxonomy = taxonomy or load_taxonomy()
     counts = _ngrams(text)
+    for gram, n in _title_ngrams(title).items():  # the page title states the subject: heading weight x TITLE_BOOST
+        counts[gram] += n * TITLE_BOOST
+    host, path = _url_parts(url)
+    for gram, n in _title_ngrams(path).items():  # URL slug words (/flu/, /diabetes/) name the subject too
+        counts[gram] += n * URL_BOOST
+    prior_domain = _host_prior(host)
     scores: dict[str, float] = {}
     sub_scores: dict[str, dict[str, float]] = {}
     for d in taxonomy.domains:
         subs = {s.name: _evidence(s.keywords, counts) for s in d.subdomains}
         sub_scores[d.name] = subs
         scores[d.name] = _evidence(d.keywords, counts, 0.5) + sum(subs.values())
+        if d.name == prior_domain and scores[d.name] > 0:  # a prior only tips a page that has some own evidence
+            scores[d.name] += HOST_PRIOR
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
     (top_name, top), (second_name, second) = ranked[0], ranked[1] if len(ranked) > 1 else ("", 0.0)
     evidence = {k: round(v, 2) for k, v in ranked[:3] if v > 0}

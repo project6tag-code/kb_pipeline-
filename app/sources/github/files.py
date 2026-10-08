@@ -113,6 +113,8 @@ def rejection_reason(entry: TreeEntry, policy: FilePolicy, *, commit_sha: str) -
     if GENERATED_NAME.match(name):
         return "generated"
     stem = name.lower().split(".", 1)[0]
+    if stem in ("readme", "index"):
+        return "readme_or_index"
     if entry.extension not in policy.extensions and not (stem in policy.filenames and entry.extension in ("", ".txt",
                                                                                                          ".md", ".rst")):
         return "extension"

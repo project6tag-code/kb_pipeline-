@@ -18,7 +18,7 @@ Both stages refuse to write unless all of the following hold:
 * ``current_database()`` equals ``--expect-database`` AND is authorized for
   this V1 test bridge (``kb_pipeline_test`` only);
 * ``data_collection_pipeline`` is never accepted;
-* the kbp revision is ``kbp_001d``;
+* the kbp revision is ``kbp_001e``;
 * the expected role is connected;
 * the public tables match the verified 5-column stub contract exactly
   (columns, types, nullability, no defaults, constraints, no triggers).
@@ -136,9 +136,13 @@ SELECT (SELECT count(*) FROM public.dataset_sources) AS dataset_sources,
 
 def verify_target(conn: Any, expect_database: str, *, stage: str) -> dict:
     """Database, revision and role guards. ``stage`` is 'admin' or 'migrator'."""
-    if expect_database in spec.FORBIDDEN_DATABASES or expect_database not in spec.ALLOWED_DATABASES:
-        raise BridgeRefused(f"--expect-database {expect_database!r} is not authorized for the V1 test bridge "
-                            f"(allowed: {sorted(spec.ALLOWED_DATABASES)})")
+    try:
+        allowed = spec.allowed_databases()
+    except spec.target.TargetConfigError as exc:
+        raise BridgeRefused(str(exc)) from None
+    if expect_database in spec.FORBIDDEN_DATABASES or expect_database not in allowed:
+        raise BridgeRefused(f"--expect-database {expect_database!r} is not authorized for the Gold bridge "
+                            f"(allowed: {sorted(allowed)}; set {spec.target.ENV_NAME})")
     row = dict(conn.execute(_text(IDENTITY_SQL)).mappings().one())
     if row["database"] in spec.FORBIDDEN_DATABASES or row["database"] != expect_database:
         raise BridgeRefused(f"connected to database {row['database']!r}, expected {expect_database!r}")

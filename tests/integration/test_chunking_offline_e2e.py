@@ -15,6 +15,7 @@ from datetime import date
 from pathlib import Path
 
 from app.config.settings import WorkerSettings
+from app.processing.chunking import plain
 from app.processing.chunking.chunker import ChunkingConfig
 from app.processing.chunking.service import ChunkWriter
 from app.processing.normalization.text import canonicalize_text
@@ -131,9 +132,9 @@ class ChunkingEndToEndTests(unittest.TestCase):
             text = accepted[document_id]["canonical_text"]
             self.assertEqual([o[0] for o in occurrences], list(range(len(occurrences))))
             for _ordinal, chunk_id, start, end, _path in occurrences:
-                self.assertEqual(canonicalize_text(text[start:end]), chunks.chunks[chunk_id]["chunk_text"])
+                self.assertEqual(canonicalize_text(plain.render(text[start:end])), chunks.chunks[chunk_id]["chunk_text"])
 
-        shared_id = chunk_id_from_text(f"## Formation\n\n{SHARED}")
+        shared_id = chunk_id_from_text(f"Formation\n\n{SHARED}")  # c2: plain text, no "## " marker
         holders = [d for d, occ in by_document.items() if any(o[1] == shared_id for o in occ)]
         self.assertEqual(len(holders), 2)  # Common Crawl page and GitHub README
         self.assertEqual(sum(1 for c in chunks.chunks if c == shared_id), 1)

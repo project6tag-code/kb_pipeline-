@@ -25,6 +25,16 @@
 Planning is deterministic: ``cluster.idx`` of a published crawl is immutable,
 and ``partition_stride`` / ``max_partitions_per_crawl`` select partitions by
 their ordinal, never at random.
+
+4. **Key ranges (filter profile).** ``cluster.idx`` is sorted by SURT key, and
+   block ``i`` covers the keys from its own first key up to the next block's
+   first key. A partition is planned only when one of its blocks can hold a
+   wanted key (``block_selector``):
+   * ``reference`` profile: the SURT host prefixes of the curated reference
+     domains (``org,wikipedia,en)`` ...), so only their index ranges are read;
+   * ``open`` profile: every block outside the raw-IP region (keys starting with
+     a digit or ``[``), which the URL policy rejects anyway.
+   Ordinals, stride and the partition cap count planned partitions only.
 """
 
 from __future__ import annotations
@@ -47,6 +57,8 @@ CHECKPOINT_VERSION = 1
 MAX_COLLINFO_BYTES = 4 * 1024 * 1024
 MAX_CLUSTER_LINE_BYTES = 16 * 1024
 MAX_CLUSTER_IDX_BYTES = 2 * 1024 ** 3
+REFERENCE_PRIORITY = 50  # lower = claimed first: reference partitions before open-crawl ones
+OPEN_PRIORITY = 100
 
 _CRAWL_ID = re.compile(r"^CC-MAIN-([0-9]{4})-([0-9]{2})$")
 _CDX_FILE = re.compile(r"^cdx-[0-9]{5}\.gz$")
@@ -103,6 +115,7 @@ class ClusterEntry:
     cdx_file: str
     offset: int
     length: int
+    key: str = ""
 
 
 def parse_cluster_line(line: bytes, *, max_block_bytes: int) -> ClusterEntry:
@@ -117,7 +130,7 @@ def parse_cluster_line(line: bytes, *, max_block_bytes: int) -> ClusterEntry:
     cdx_file, offset, length = fields[1], fields[2], fields[3]
     if not _CDX_FILE.match(cdx_file) or not _DIGITS.match(offset) or not _DIGITS.match(length):
         raise DiscoveryError("cluster.idx line has an invalid file, offset or length")
-    entry = ClusterEntry(cdx_file, int(offset), int(length))
+    entry = ClusterEntry(cdx_file, int(offset), int(length), fields[0].split(" ", 1)[0])
     if not 1 <= entry.length <= max_block_bytes:
         raise DiscoveryError(f"cluster.idx block length {entry.length} outside 1..{max_block_bytes}")
     return entry
@@ -147,10 +160,51 @@ class PartitionSpec:
         }
 
 
+def surt_host_prefixes(domain: str) -> tuple[str, ...]:
+    """SURT key prefixes of ``domain`` and its subdomains (Common Crawl drops a leading ``www.``)."""
+    reversed_host = ",".join(reversed(domain.lower().removeprefix("www.").split(".")))
+    return (reversed_host + ")", reversed_host + ",")
+
+
+BlockSelector = Callable[[str, str | None], bool]
+
+
+def _ip_region(key: str) -> bool:
+    return not key or key[0].isdigit() or key[0] == "["
+
+
+def block_selector(filter_config: FilterConfig) -> BlockSelector:
+    """Whether a block whose keys run from ``key`` to ``next_key`` (None: end of index) may hold candidates."""
+    if filter_config.profile == "reference":
+        prefixes = tuple(sorted(p for d in filter_config.reference_domains for p in surt_host_prefixes(d)))
+
+        def reference(key: str, next_key: str | None) -> bool:
+            # [key, next_key] intersects [prefix, prefix + U+FFFF] for some prefix
+            return any(key < prefix + "￿" and (next_key is None or next_key >= prefix) for prefix in prefixes)
+
+        return reference
+
+    def open_profile(key: str, next_key: str | None) -> bool:
+        return not (_ip_region(key) and (next_key is None or _ip_region(next_key)))
+
+    return open_profile
+
+
+def _with_next_key(entries: Iterable[ClusterEntry]) -> Iterator[tuple[ClusterEntry, str | None]]:
+    previous: ClusterEntry | None = None
+    for entry in entries:
+        if previous is not None:
+            yield previous, entry.key
+        previous = entry
+    if previous is not None:
+        yield previous, None
+
+
 def plan_partitions(lines: Iterable[bytes], crawl_id: str, planning: PlanningConfig, *,
-                    max_block_bytes: int) -> Iterator[PartitionSpec]:
+                    max_block_bytes: int, selector: BlockSelector | None = None) -> Iterator[PartitionSpec]:
     """Group ``cluster.idx`` lines into aligned partitions (streaming, bounded memory).
 
+    With a ``selector``, a partition is planned only when at least one of its blocks is selected.
     Raises DiscoveryError on a malformed line or non-contiguous shard layout:
     partitions must cover exact, contiguous byte ranges.
     """
@@ -161,11 +215,14 @@ def plan_partitions(lines: Iterable[bytes], crawl_id: str, planning: PlanningCon
     expected_offset = 0
     group: list[tuple[int, int]] = []
     group_first = 0
+    group_selected = False
     ordinal = 0
     emitted = 0
 
     def emit() -> PartitionSpec | None:
         nonlocal ordinal, emitted
+        if selector is not None and not group_selected:
+            return None
         spec = PartitionSpec(crawl_id, current_file, group_first, group_first + len(group) - 1, tuple(group), ordinal)
         ordinal += 1
         if spec.ordinal % planning.partition_stride != 0:
@@ -175,10 +232,8 @@ def plan_partitions(lines: Iterable[bytes], crawl_id: str, planning: PlanningCon
         emitted += 1
         return spec
 
-    for raw in lines:
-        if not raw.strip():
-            continue
-        entry = parse_cluster_line(raw, max_block_bytes=max_block_bytes)
+    entries = (parse_cluster_line(raw, max_block_bytes=max_block_bytes) for raw in lines if raw.strip())
+    for entry, next_key in _with_next_key(entries):
         if entry.cdx_file != current_file:
             if group:
                 spec = emit()
@@ -188,12 +243,16 @@ def plan_partitions(lines: Iterable[bytes], crawl_id: str, planning: PlanningCon
                 raise DiscoveryError(f"cluster.idx lines of {entry.cdx_file} are not contiguous")
             seen_files.add(entry.cdx_file)
             current_file, local_index, expected_offset, group = entry.cdx_file, 0, 0, []
+            group_selected = False
         if entry.offset != expected_offset:
             raise DiscoveryError(f"{entry.cdx_file}: block {local_index} starts at {entry.offset}, "
                                  f"expected {expected_offset} (blocks must be contiguous)")
         if not group:
             group_first = local_index
+            group_selected = False
         group.append((entry.offset, entry.length))
+        if selector is not None and not group_selected:
+            group_selected = selector(entry.key, next_key)
         expected_offset = entry.offset + entry.length
         local_index += 1
         if len(group) == size:
@@ -272,9 +331,12 @@ class CrawlPlanner:
         lines = self.client.iter_lines(self.client.endpoints.data_url(cluster_idx_key(crawl_id)),
                                        max_line_bytes=MAX_CLUSTER_LINE_BYTES, max_total_bytes=MAX_CLUSTER_IDX_BYTES)
         batch: list[JobSpec] = []
-        for spec in plan_partitions(lines, crawl_id, self.planning, max_block_bytes=self.max_block_bytes):
+        selector = block_selector(self.filter_config)
+        priority = REFERENCE_PRIORITY if self.filter_config.profile == "reference" else OPEN_PRIORITY
+        for spec in plan_partitions(lines, crawl_id, self.planning, max_block_bytes=self.max_block_bytes,
+                                    selector=selector):
             batch.append(JobSpec(
-                job_type=JobType.CC_INDEX_PARTITION, source=JobSource.COMMON_CRAWL,
+                job_type=JobType.CC_INDEX_PARTITION, source=JobSource.COMMON_CRAWL, priority=priority,
                 source_identifier=spec.source_identifier(self.filter_config), max_attempts=self.policy.max_attempts,
                 stage=Stage.DISCOVERED, checkpoint=spec.initial_checkpoint(self.filter_config), run_id=self.run_id))
             result.partitions += 1

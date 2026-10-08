@@ -127,12 +127,15 @@ class ParseTests(unittest.TestCase):
         self.assertEqual((capture.payload_digest, capture.payload_digest_verified), ("sha1:" + "E" * 32, False))
         self.assertIsNone(parse(record).payload_digest)
 
-    def test_unparseable_optional_headers_become_null(self) -> None:
+    def test_record_id_and_crawl_date_are_required(self) -> None:
+        # The WARC-Record-ID is the Gold source_id and WARC-Date the crawl date: neither may be missing.
         raw = gzip.decompress(make_warc_record(URL))
-        raw = raw.replace(b"2024-08-05T23:12:34Z", b"not-a-date").replace(b"<urn:uuid:", b"<urn:x:")
-        capture = parse(gzip.compress(raw))
-        self.assertIsNone(capture.warc_date)
-        self.assertIsNone(capture.record_id)
+        for broken, code in ((raw.replace(b"<urn:uuid:", b"<urn:x:"), "missing_record_id"),
+                             (raw.replace(b"2024-08-05T23:12:34Z", b"not-a-date"), "missing_warc_date")):
+            with self.subTest(code=code):
+                with self.assertRaises(WarcRecordError) as caught:
+                    parse(gzip.compress(broken))
+                self.assertEqual(caught.exception.code, code)
 
 
 class MetadataTests(unittest.TestCase):

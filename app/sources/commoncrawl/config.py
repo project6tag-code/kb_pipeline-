@@ -18,6 +18,10 @@ Crawl selection and planning
 * ``KB_CC_MAX_PARTITIONS_PER_CRAWL`` (0 = no limit).
 
 Candidate filter (part of the filter version, hence of the job identity)
+* ``KB_CC_PROFILE`` (``reference``): ``reference`` plans and keeps only the curated
+  reference publishers of ``reference_domains_v1.json`` (or ``KB_CC_REFERENCE_DOMAINS``,
+  a comma list); ``open`` samples the whole crawl. Both apply the strict URL policy
+  (``app.sources.commoncrawl.index.url_rejection``).
 * ``KB_CC_MIME_TYPES`` (``text/html,application/xhtml+xml``)
 * ``KB_CC_LANGUAGES`` (``eng``; empty disables): keep a record when the index
   lists one of these languages, or lists no language at all.
@@ -53,7 +57,16 @@ _CRAWL_ID = re.compile(r"^CC-MAIN-[0-9]{4}-[0-9]{2}$")
 _MIME = re.compile(r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$")
 _LANGUAGE = re.compile(r"^[a-z]{3}$")
 
-FILTER_SPEC_VERSION = "f1"
+FILTER_SPEC_VERSION = "f2"
+URL_POLICY_VERSION = "url2"  # url1 + bare site homepages
+PROFILES = ("open", "reference")
+REFERENCE_DOMAINS_FILE = Path(__file__).with_name("reference_domains_v1.json")
+_DOMAIN = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+
+def load_reference_domains(path: Path = REFERENCE_DOMAINS_FILE) -> tuple[str, ...]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return tuple(sorted({str(d).strip().lower() for d in data["domains"] if str(d).strip()}))
 DEFAULT_USER_AGENT = "kb-pipeline-cc-acquisition/1.0 (bounded research crawler; byte-range fetches only)"
 
 
@@ -113,10 +126,23 @@ class FilterConfig:
     reject_truncated: bool = True
     max_record_bytes: int = 5 * 1024 * 1024
     required_status: int = 200
+    profile: str = "open"
+    reference_domains: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mime_types", tuple(sorted(set(self.mime_types))))
         object.__setattr__(self, "languages", tuple(sorted(set(self.languages))))
+        object.__setattr__(self, "reference_domains", tuple(sorted({d.strip().lower().removeprefix("www.")
+                                                                    for d in self.reference_domains if d.strip()})))
+        if self.profile not in PROFILES:
+            raise SettingsError(f"profile must be one of {PROFILES}, got {self.profile!r}")
+        if self.profile == "reference" and not self.reference_domains:
+            raise SettingsError("the reference profile needs at least one reference domain")
+        if self.profile == "open" and self.reference_domains:
+            raise SettingsError("the open profile takes no reference domains")
+        for domain in self.reference_domains:
+            if not _DOMAIN.match(domain):
+                raise SettingsError(f"invalid reference domain {domain!r}")
         if not self.mime_types:
             raise SettingsError("at least one MIME type must be allowed")
         for mime in self.mime_types:
@@ -138,11 +164,14 @@ class FilterConfig:
             "languages": list(self.languages),
             "reject_truncated": self.reject_truncated,
             "max_record_bytes": self.max_record_bytes,
+            "url_policy": URL_POLICY_VERSION,
+            "profile": self.profile,
+            "reference_domains": list(self.reference_domains),
         }, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
 
     @property
     def version(self) -> str:
-        """Deterministic, e.g. ``f1.3c9a0e1b2d4f``: spec version + hash of the parameters."""
+        """Deterministic, e.g. ``f2.3c9a0e1b2d4f``: spec version + hash of the parameters."""
         return f"{FILTER_SPEC_VERSION}.{hashlib.sha256(self.canonical().encode('ascii')).hexdigest()[:12]}"
 
 
@@ -245,11 +274,18 @@ class CCSettings:
         env = os.environ if environ is None else environ
         explicit = tuple(c.strip() for c in env.get("KB_CC_CRAWLS", "").split(",") if c.strip())
         languages = _list(env, "KB_CC_LANGUAGES", ("eng",))
+        profile = env.get("KB_CC_PROFILE", "").strip().lower() or "reference"
+        reference_domains: tuple[str, ...] = ()
+        if profile == "reference":
+            reference_domains = (_list(env, "KB_CC_REFERENCE_DOMAINS", ()) if env.get("KB_CC_REFERENCE_DOMAINS", "").strip()
+                                 else load_reference_domains())
         filter_config = FilterConfig(
             mime_types=_list(env, "KB_CC_MIME_TYPES", ("application/xhtml+xml", "text/html")),
             languages=languages,
             reject_truncated=_bool(env, "KB_CC_REJECT_TRUNCATED", True),
             max_record_bytes=_int(env, "KB_CC_MAX_RECORD_BYTES", 5 * 1024 * 1024, 1024, 64 * 1024 * 1024),
+            profile=profile,
+            reference_domains=reference_domains,
         )
         concurrency = _int(env, "KB_CC_FETCH_CONCURRENCY", 4, 1, 32)
         return cls(

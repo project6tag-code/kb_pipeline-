@@ -6,6 +6,7 @@ import threading
 import unittest
 import uuid
 
+from app.processing.chunking import plain
 from app.processing.chunking.chunker import ChunkingConfig
 from app.processing.chunking.service import ChunkWriter, run_backfill, silver_kind
 from app.processing.normalization.text import canonicalize_text
@@ -18,6 +19,11 @@ from tests.unit.test_chunking import section
 S1 = section("Formation", 14)
 S2 = section("Movement", 14, topic="ice sheets")
 S3 = section("Retreat", 14, topic="mountain glaciers")
+
+
+def plain_text(span: str) -> str:
+    """Chunking c2: the stored chunk text is the span rendered as plain text."""
+    return canonicalize_text(plain.render(span))
 
 
 def writer_for(*documents, config: ChunkingConfig = ChunkingConfig()):
@@ -38,7 +44,7 @@ class IdentityAndDedupTests(unittest.TestCase):
         for ordinal, chunk_id, start, end, section_path in occurrences:
             text = store.chunks[chunk_id]["chunk_text"]
             self.assertEqual(chunk_id, chunk_id_from_text(text))                      # Identity V1
-            self.assertEqual(canonicalize_text(doc.canonical_text[start:end]), text)  # schema §5.15 invariant
+            self.assertEqual(plain_text(doc.canonical_text[start:end]), text)  # c2 plain-text invariant
             self.assertEqual(store.chunks[chunk_id]["first_document_id"], doc.document_id)
             self.assertIn("Glaciers", json.loads(section_path)["headings"])
 
@@ -60,7 +66,7 @@ class IdentityAndDedupTests(unittest.TestCase):
         writer.chunk_accepted(None, web)
         counts = writer.chunk_accepted(None, repo)
         self.assertEqual((counts["chunk_new"], counts["chunk_existing"]), (1, 1))
-        shared = chunk_id_from_text(S1)
+        shared = chunk_id_from_text(plain_text(S1))
         self.assertEqual(store.ordered(web.document_id, version)[0][1], shared)
         self.assertEqual(store.ordered(repo.document_id, version)[0][1], shared)
         self.assertEqual(len(store.chunks), 3)
@@ -131,7 +137,7 @@ class IdempotencyAndSafetyTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(store.chunks), 9)          # S1 once + 8 distinct parts
         self.assertEqual(len(store.occurrences), 16)    # 2 per document, no duplicates
-        shared = chunk_id_from_text(S1)
+        shared = chunk_id_from_text(plain_text(S1))
         self.assertEqual(sum(1 for o in store.occurrences.values() if o["chunk_id"] == shared), 8)
 
     def test_a_new_chunking_version_adds_occurrences_and_reuses_identical_chunks(self) -> None:
@@ -224,10 +230,9 @@ class SilverInlineChunkingTests(unittest.TestCase):
         self.assertEqual(len(occurrences), 3)  # the article's three sections
         text = harness.doc(web)["canonical_text"]
         for _o, chunk_id, start, end, _p in occurrences:
-            self.assertEqual(store.chunks[chunk_id]["chunk_text"], text[start:end])
-            self.assertEqual(store.chunks[chunk_id]["chunk_text"], canonicalize_text(text[start:end]))
-            self.assertEqual(chunk_id, uuid.UUID(str(chunk_id_from_text(text[start:end]))))
-            self.assertEqual(len(chunk_content_hash(text[start:end])), 64)
+            self.assertEqual(store.chunks[chunk_id]["chunk_text"], plain_text(text[start:end]))
+            self.assertEqual(chunk_id, uuid.UUID(str(chunk_id_from_text(plain_text(text[start:end])))))
+            self.assertEqual(len(chunk_content_hash(plain_text(text[start:end]))), 64)
         self.assertEqual({d for (d, _v, _o) in store.occurrences}, {document_id})  # only the accepted doc
 
 

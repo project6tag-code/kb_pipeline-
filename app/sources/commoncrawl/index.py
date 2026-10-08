@@ -19,7 +19,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from app.sources.commoncrawl.config import FilterConfig
 
@@ -176,8 +176,101 @@ def parse_cdx_line(line: bytes, crawl_id: str, *, max_line_bytes: int = 64 * 102
     )
 
 
+# --------------------------------------------------------------------------- #
+# URL policy (URL_POLICY_VERSION ``url2``): page kinds that are never factual KB material
+# --------------------------------------------------------------------------- #
+
+MAX_POLICY_URL_CHARS = 300
+MAX_PATH_SEGMENTS = 8
+MAX_QUERY_PARAMS = 2
+
+_IPV4 = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+# Whole path segments (case-insensitive, without extension) naming non-content pages.
+JUNK_SEGMENTS = frozenset({
+    # commerce
+    "cart", "basket", "checkout", "shop", "store", "shopping", "product", "products", "catalog", "catalogue",
+    "pricing", "price", "order", "orders", "buy", "deals", "coupon", "coupons", "wishlist",
+    # accounts / admin
+    "login", "logout", "signin", "sign-in", "signup", "sign-up", "register", "account", "my-account", "profile",
+    "wp-admin", "wp-login", "admin", "dashboard", "password", "cgi-bin",
+    # listings / navigation / feeds
+    "search", "tag", "tags", "category", "categories", "archive", "archives", "author", "authors", "feed", "feeds",
+    "rss", "atom", "sitemap", "print", "share", "calendar", "comment", "comments", "attachment",
+    # legal / corporate boilerplate
+    "privacy", "privacy-policy", "terms", "terms-of-use", "terms-of-service", "terms-and-conditions", "tos",
+    "cookie", "cookies", "cookie-policy", "disclaimer", "legal", "imprint", "impressum", "contact", "contact-us",
+    "careers", "jobs", "advertise", "advertising", "subscribe", "newsletter", "unsubscribe", "donate",
+    # test / sample / synthetic areas
+    "test", "tests", "testing", "sandbox", "demo", "demos", "sample", "samples", "example", "examples",
+    "dummy", "staging", "dev", "lorem-ipsum", "placeholder",
+})
+_JUNK_QUERY_KEYS = re.compile(r"^(?:utm_\w*|sessionid|sid|phpsessid|jsessionid|replytocom|share|print|printable"
+                              r"|action|oldid|diff|curid|redlink|sort|order|orderby|filter|filters|page|paged|p"
+                              r"|start|offset|limit|lang|ref|source|fbclid|gclid|add-to-cart|attachment_id)$", re.I)
+# MediaWiki non-article namespaces (Talk:, User:, Special:, File:, Category: ...).
+_WIKI_NAMESPACE = re.compile(r"^(?:special|talk|user|user_talk|file|file_talk|template|template_talk|help"
+                             r"|help_talk|category|category_talk|portal|portal_talk|wikipedia|wikipedia_talk|wp"
+                             r"|draft|draft_talk|mediawiki|module|timedtext|book|media|project|image)(?:_talk)?:",
+                             re.I)
+
+
+def host_matches(host: str, domains: tuple[str, ...]) -> bool:
+    """``host`` equals a listed domain or is one of its subdomains."""
+    host = host.lower().removeprefix("www.")
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def url_rejection(url: str) -> str | None:
+    """Why ``url`` is not a candidate under URL policy ``url1``, or None. Pure; never fetches."""
+    if len(url) > MAX_POLICY_URL_CHARS:
+        return "url_too_long"
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return "url_unparseable"
+    host = (parts.hostname or "").lower()
+    if _IPV4.match(host) or ":" in host:
+        return "ip_host"
+    if port is not None and port not in (80, 443):
+        return "non_default_port"
+    if "xn--" in host:
+        return "punycode_host"
+    if host.count("-") >= 4 or any(len(label) > 40 for label in host.split(".")):
+        return "suspicious_host"
+    segments = [unquote(s) for s in parts.path.split("/") if s]
+    if not segments or (len(segments) == 1 and segments[0].lower() in ("index.html", "index.htm", "index.php",
+                                                                        "default.aspx", "home", "home.html")):
+        return "homepage"  # a site's front page is a navigation / news hub, not an article
+    if len(segments) > MAX_PATH_SEGMENTS:
+        return "deep_path"
+    for index, segment in enumerate(segments):
+        if segment.lower() == "page" and index + 1 < len(segments) and segments[index + 1].isdigit():
+            return "pagination"
+        stem = segment.lower().rsplit(".", 1)[0]
+        if stem in JUNK_SEGMENTS:
+            return f"junk_path:{stem}"
+        if _WIKI_NAMESPACE.match(segment):
+            return "wiki_namespace"
+    if segments and segments[-1].lower().rsplit(".", 1)[-1] in ("xml", "json", "rss", "atom", "txt", "csv"):
+        return "data_file"
+    if parts.query:
+        params = [kv for kv in parts.query.split("&") if kv]
+        if len(params) > MAX_QUERY_PARAMS:
+            return "query_too_complex"
+        for param in params:
+            if _JUNK_QUERY_KEYS.match(unquote(param.split("=", 1)[0])):
+                return "junk_query"
+    return None
+
+
 def rejection_reason(record: CdxRecord, config: FilterConfig) -> str | None:
     """Return why ``record`` is not an acquisition candidate, or None if it is one."""
+    if config.profile == "reference" and not host_matches(record.url_host, config.reference_domains):
+        return "not_reference_domain"
+    url_reason = url_rejection(record.url)
+    if url_reason is not None:
+        return url_reason
     if record.record_folder != "warc":
         return "record_type"  # crawldiagnostics / robotstxt are not page responses
     if record.status != config.required_status:

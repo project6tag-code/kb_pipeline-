@@ -1,9 +1,10 @@
-"""Focused pure-logic tests for Gold Publisher V1 guards and conflict policy."""
+"""Focused pure-logic tests for Gold Publisher V2 guards and conflict policy."""
 
 import hashlib
 import math
 import unittest
 import uuid
+from datetime import datetime, timezone
 
 from app.processing.chunk_dedup import eligibility
 from app.processing.embedding import model as embedding_model
@@ -77,15 +78,23 @@ class VectorAndProvenanceTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(service.GoldPublisherError):
                 service.validate_vector_row(row)
 
-    def test_provenance_rejects_missing_url_and_unknown_channel(self) -> None:
+    def test_provenance_maps_source_document_and_dates(self) -> None:
+        record_id, crawled = uuid.uuid4(), datetime(2024, 8, 5, 23, 12, 34, tzinfo=timezone.utc)
         base = {"chunk_id": uuid.uuid4(), "source_channel": "common_crawl", "source_url": "https://example.test/x",
-                "source_title": None, "source_published_at": None, "subject_domain": None}
-        record = service.validate_provenance(base)
-        self.assertEqual(record["source_type"], "common_crawl")
-        self.assertIsNone(record["source_title"])
-        self.assertIsNone(record["published_at"])
-        self.assertIsNone(record["updated_at"])
-        for changes in ({"source_url": None}, {"source_channel": "kaggle"}):
+                "source_title": None, "source_published_at": None, "subject_domain": None,
+                "warc_record_id": record_id, "crawled_at": crawled, "page_published_at": None,
+                "page_modified_at": None, "http_last_modified": None, "published_evidence": None,
+                "modified_evidence": None}
+        metadata, dataset = service.validate_provenance(base)
+        self.assertEqual((metadata["source_type"], metadata["source_id"]), ("web_page", record_id))
+        self.assertIsNone(metadata["source_title"])
+        self.assertEqual((metadata["published_at"], metadata["updated_at"], metadata["crawled_at"]),
+                         (crawled, crawled, crawled))
+        self.assertEqual((dataset["id"], dataset["status"]), (record_id, "KB_SOURCE_DOCUMENT"))
+        self.assertEqual(dataset["metadata"]["published_from"], "crawl_date_fallback")
+        refused = ({"source_url": None}, {"source_channel": "kaggle"}, {"warc_record_id": None},
+                   {"crawled_at": None}, {"warc_record_id": uuid.UUID("a7d8d2e1-8400-5916-9440-b492e8e692ce")})
+        for changes in refused:
             with self.subTest(changes=changes), self.assertRaises(service.GoldPublisherError):
                 service.validate_provenance({**base, **changes})
 
@@ -94,19 +103,22 @@ class ConflictTests(unittest.TestCase):
     def setUp(self) -> None:
         self.chunk_id = uuid.uuid4()
         self.source_id = uuid.uuid4()
-        self.expected_metadata = {"id": self.chunk_id, "source_url": "https://example.test/a",
-                                  "source_title": "A", "source_type": "common_crawl", "domain": "Science",
-                                  "published_at": None, "updated_at": None}
+        moment = datetime(2024, 8, 5, tzinfo=timezone.utc)
+        self.expected_metadata = {"id": self.chunk_id, "source_id": self.source_id,
+                                  "source_url": "https://example.test/a", "source_title": "A",
+                                  "source_type": "common_crawl", "domain": "Science", "published_at": moment,
+                                  "updated_at": moment, "crawled_at": moment}
         self.chunk_text = "Canonical factual chunk"
         self.vector_wire = b"immutable vector wire bytes"
-        self.metadata = {**self.expected_metadata, "source_id": self.source_id}
-        self.kb = {"id": self.chunk_id, "chunk": self.chunk_text, "embedding_wire": self.vector_wire}
+        self.metadata = dict(self.expected_metadata)
+        self.kb = {"id": self.chunk_id, "source_id": self.source_id, "chunk": self.chunk_text,
+                   "embedding_wire": self.vector_wire}
         self.ledger = {"chunk_id": self.chunk_id, "embedding_model_id": service.MODEL_ID,
                        "published_at": None, "run_id": uuid.uuid4()}
 
     def classify(self, metadata=None, kb=None, ledger=None):
         return service.classify_existing_gold(
-            metadata, kb, ledger, expected_metadata=self.expected_metadata, source_id=self.source_id,
+            metadata, kb, ledger, expected_metadata=self.expected_metadata,
             chunk_id=self.chunk_id, chunk_text=self.chunk_text, vector_wire=self.vector_wire,
         )
 
@@ -119,19 +131,48 @@ class ConflictTests(unittest.TestCase):
         for rows in partial:
             with self.subTest(rows=rows), self.assertRaises(service.GoldConflict):
                 self.classify(*rows)
-        metadata_changes = ("source_id", "source_url", "source_title", "source_type", "domain", "published_at")
-        for field in metadata_changes:
+        for field in service.METADATA_FIELDS:
+            if field == "id":
+                continue
             changed = dict(self.metadata)
             changed[field] = uuid.uuid4() if field == "source_id" else "changed"
             with self.subTest(field=field), self.assertRaises(service.GoldConflict):
                 self.classify(changed, self.kb, self.ledger)
-        for field, value in (("chunk", "changed chunk"), ("embedding_wire", b"changed vector")):
+        for field, value in (("chunk", "changed chunk"), ("embedding_wire", b"changed vector"),
+                             ("source_id", uuid.uuid4()), ("source_id", None)):
             changed = {**self.kb, field: value}
             with self.subTest(field=field), self.assertRaises(service.GoldConflict):
                 self.classify(self.metadata, changed, self.ledger)
         changed_ledger = {**self.ledger, "embedding_model_id": 99}
         with self.assertRaises(service.GoldConflict):
             self.classify(self.metadata, self.kb, changed_ledger)
+
+    def test_chunks_of_one_capture_share_source_id_but_keep_unique_ids(self) -> None:
+        record_id, crawled = uuid.uuid4(), datetime(2024, 8, 5, tzinfo=timezone.utc)
+        base = {"source_channel": "common_crawl", "source_url": "https://en.wikipedia.org/wiki/Oxygen",
+                "source_title": "Oxygen", "source_published_at": None, "subject_domain": "Chemistry",
+                "warc_record_id": record_id, "crawled_at": crawled, "page_published_at": None,
+                "page_modified_at": None, "http_last_modified": None, "published_evidence": None,
+                "modified_evidence": None}
+        first, _ = service.validate_provenance({**base, "chunk_id": uuid.uuid4()})
+        second, _ = service.validate_provenance({**base, "chunk_id": uuid.uuid4()})
+        other, _ = service.validate_provenance({**base, "chunk_id": uuid.uuid4(), "warc_record_id": uuid.uuid4()})
+        self.assertNotEqual(first["id"], second["id"])                       # each chunk id stays unique
+        self.assertEqual(first["source_id"], second["source_id"])            # same capture -> same source_id
+        self.assertEqual(first["source_id"], record_id)                      # CC: the WARC-Record-ID
+        self.assertNotEqual(first["source_id"], other["source_id"])          # another capture -> another id
+        kb = {"id": first["id"], "source_id": record_id, "chunk": "t", "embedding_wire": b"w"}
+        self.assertTrue(service._same_kb(kb, first["id"], first["source_id"], "t", b"w"))
+        self.assertFalse(service._same_kb(kb, first["id"], other["source_id"], "t", b"w"))
+
+    def test_dataset_rows_compare_exactly(self) -> None:
+        expected = {"id": self.source_id, "source_id": uuid.uuid4(), "dataset_name": "A",
+                    "status": "KB_SOURCE_DOCUMENT", "metadata": {"warc_record_offset": 5, "crawl_id": "CC-MAIN-2024-33"}}
+        self.assertTrue(service._same_dataset(dict(expected), expected))
+        for field, value in (("dataset_name", "B"), ("status", "KB_REFERENCE"),
+                             ("metadata", {"warc_record_offset": 6, "crawl_id": "CC-MAIN-2024-33"})):
+            with self.subTest(field=field):
+                self.assertFalse(service._same_dataset({**expected, field: value}, expected))
 
 
 if __name__ == "__main__":

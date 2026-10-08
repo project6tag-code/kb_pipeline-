@@ -1,4 +1,4 @@
-"""Gate 16: spam / error / template / noise filter (NOISE_FILTER_VERSION ``noise1``).
+"""Gate 16: spam / error / template / noise filter (NOISE_FILTER_VERSION ``noise2``).
 
 Every check is deterministic and returns a reason code; any hit fails the
 gate. Page-type checks (error, bot wall, parked domain, placeholder) only
@@ -20,7 +20,10 @@ mention inside real content.
 | excessive_repetition    | >= 30% of line characters in duplicated lines, or >= 60% duplicated 5-grams (code: 45% / 80%) |
 | gibberish               | unpronounceable words >= 25%, or no function words in long prose        |
 | symbol_noise            | symbols >= 25% of non-space characters (code: 45%)                     |
-| low_information         | unique-word ratio < 0.15 over >= 100 words, or character entropy < 3.0 |
+| low_information         | unique-word ratio < 0.15 over the first 1,000 words (>= 100 words), or |
+|                         | character entropy < 3.0. The window keeps the ratio length-independent: |
+|                         | over a whole long article it always falls (noise1 rejected long         |
+|                         | encyclopedia entries)                                                   |
 """
 
 from __future__ import annotations
@@ -28,9 +31,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from app.processing.quality.scorer import TextFeatures
+from app.processing.quality.scorer import _WORD, TextFeatures
 
-VERSION = "noise1"
+VERSION = "noise2"
+LOW_INFORMATION_WINDOW = 1000
 
 _ERROR = re.compile(r"\b(404|page not found|not found|error 404|page (does not|doesn't|could not be found|cannot "
                     r"be found)|no longer (available|exists)|has been (removed|deleted)|access denied|403 forbidden"
@@ -54,6 +58,11 @@ _URL = re.compile(r"(https?://|www\.)\S+", re.I)
 _UNPRONOUNCEABLE = re.compile(r"[bcdfghjklmnpqrstvwxz]{5,}", re.I)
 _VOWEL = re.compile(r"[aeiouy]", re.I)
 _ALPHA_WORD = re.compile(r"[A-Za-z]{4,}")
+
+
+def _window_unique_ratio(text: str) -> float:
+    words = [w.lower() for w in _WORD.findall(text)[:LOW_INFORMATION_WINDOW]]
+    return len(set(words)) / len(words) if words else 1.0
 
 
 @dataclass(frozen=True)
@@ -105,6 +114,6 @@ def check(text: str, f: TextFeatures, *, kind: str, min_words: int, link_ratio: 
     line_limit, gram_limit = (0.45, 0.80) if code_like else (0.30, 0.60)
     if f.dup_line_frac >= line_limit or f.dup_5gram_frac >= gram_limit:
         reasons.append("excessive_repetition")
-    if (f.words >= 100 and f.unique_ratio < 0.15) or (f.chars >= 200 and f.char_entropy < 3.0):
+    if (f.words >= 100 and _window_unique_ratio(text) < 0.15) or (f.chars >= 200 and f.char_entropy < 3.0):
         reasons.append("low_information")
     return NoiseResult(not reasons, tuple(dict.fromkeys(reasons)))

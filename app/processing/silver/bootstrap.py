@@ -41,7 +41,7 @@ class BootstrapTargetError(RuntimeError):
 
 
 def verify_target(conn: Any, expect_database: str) -> dict[str, Any]:
-    """Refuse unless connected to exactly ``expect_database`` as the migrator at revision kbp_001d."""
+    """Refuse unless connected to exactly ``expect_database`` as the migrator at revision kbp_001e."""
     from sqlalchemy import text
 
     row = dict(conn.execute(text(TARGET_SQL)).mappings().one())

@@ -156,7 +156,10 @@ class HappyPathTests(unittest.TestCase):
         self.assertEqual(manifest["retrieval"]["range"], f"bytes={offset}-{offset + length - 1}")
         self.assertTrue(manifest["warc"]["payload_digest_verified"])
         self.assertEqual(manifest["html_metadata"]["title"], "Title 1")
-        self.assertNotIn("published_at", json.dumps(manifest))
+        # The fixture page declares no dates: the evidence is recorded as absent, never synthesized.
+        self.assertEqual(manifest["html_metadata"]["dates"],
+                         {"version": "ccdate-v1", "published_at": None, "published_evidence": None,
+                          "modified_at": None, "modified_evidence": None, "http_last_modified": None})
 
         metrics = env.metrics(job_id)
         self.assertEqual((metrics["lines"], metrics["candidates"], metrics["inserted"], metrics["fetched"],

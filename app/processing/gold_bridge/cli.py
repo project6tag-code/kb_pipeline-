@@ -150,8 +150,9 @@ def cmd_resolve(args) -> int:
         with engine.connect() as conn:
             conn.exec_driver_sql("BEGIN READ ONLY")
             try:
-                if args.expect_database not in spec.ALLOWED_DATABASES:
-                    raise SystemExit(f"{args.expect_database!r} is not authorized for the V1 test bridge")
+                if args.expect_database not in spec.allowed_databases():
+                    raise SystemExit(f"{args.expect_database!r} is not authorized for the Gold bridge "
+                                     f"(set {spec.target.ENV_NAME})")
                 database = conn.execute(text("SELECT current_database()")).scalar_one()
                 if database != args.expect_database:
                     raise SystemExit(f"connected to {database!r}, expected {args.expect_database!r}")

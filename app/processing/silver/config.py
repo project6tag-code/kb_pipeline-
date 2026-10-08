@@ -28,21 +28,24 @@ from typing import Any
 
 from app.processing.factuality.classifier import VERSION as SUITABILITY_FILTER_VERSION
 from app.processing.language.detector import VERSION as LANGUAGE_DETECTOR_VERSION
+from app.processing.normalization.encoding import ENCODING_REPAIR_VERSION
+from app.processing.normalization.markup import MARKUP_NORMALIZER_VERSION
+from app.processing.normalization.symbols import SYMBOL_CLEANER_VERSION
 from app.processing.normalization.text import CANONICALIZATION_VERSION
 
 # Code versions: bump when the component's output can change. The language and
 # suitability versions are defined once, in their component modules (imported above).
 EXTRACTOR_VERSION = "ext1"
 HTML_CLEANER_VERSION = "html1"
-DECODER_VERSION = "dec1"
+DECODER_VERSION = "dec2"                # dec1 + mojibake repair and corruption gate (enc1)
 PRIVACY_DETECTOR_VERSION = "pii1"
 SECRET_DETECTOR_VERSION = "sec1"
-NOISE_FILTER_VERSION = "noise1"
+NOISE_FILTER_VERSION = "noise2+ptype1"     # windowed low_information + page type / synthetic content
 QUALITY_FILTER_VERSION = "qual1"
 EXACT_DEDUP_VERSION = "exact1"          # Identity V1 content hash (document_was_new)
 NEAR_DEDUP_ALGORITHM = "minhash_lsh"     # kbp.dedup_methods.algorithm
 NEAR_DEDUP_VERSION = "oph-mh128-b32r4-w5-v1"
-DOMAIN_CLASSIFIER_VERSION = "dom1"
+DOMAIN_CLASSIFIER_VERSION = "dom3"
 SILVER_GATE_VERSION = "gate1"
 IDENTITY_VERSION = "v1"
 
@@ -81,10 +84,10 @@ class PolicyConfig:
     language_mixed_fraction: float = 0.20
     code_min_prose_tokens: int = 25
     pii_quarantine_count: int = 25                     # personal identifiers per document -> contact dump
-    noise_min_words: int = 40
-    quality_threshold: float = 0.55
-    suitability_pass: float = 0.55
-    suitability_fail: float = 0.35
+    noise_min_words: int = 80                          # strict: a factual KB page has real body text
+    quality_threshold: float = 0.60
+    suitability_pass: float = 0.60
+    suitability_fail: float = 0.40
     near_duplicate_threshold: float = 0.80
     version_threshold: float = 0.50
     related_threshold: float = 0.50
@@ -115,6 +118,9 @@ class SilverConfig:
             "canonicalizer": CANONICALIZATION_VERSION,
             "language_detector": LANGUAGE_DETECTOR_VERSION,
             "privacy_detector": PRIVACY_DETECTOR_VERSION,
+            "symbol_cleaner": SYMBOL_CLEANER_VERSION,
+            "encoding_repair": ENCODING_REPAIR_VERSION,
+            "markup_normalizer": MARKUP_NORMALIZER_VERSION,
             "secret_detector": SECRET_DETECTOR_VERSION,
             "noise_filter": NOISE_FILTER_VERSION,
             "quality_filter": QUALITY_FILTER_VERSION,
@@ -129,7 +135,8 @@ class SilverConfig:
     @property
     def extraction_version(self) -> str:
         versions = self.component_versions()
-        keys = ("extractor", "html_cleaner", "decoder", "canonicalizer", "language_detector", "privacy_detector")
+        keys = ("extractor", "html_cleaner", "decoder", "encoding_repair", "markup_normalizer", "symbol_cleaner",
+                "canonicalizer", "language_detector", "privacy_detector")
         policy = self.policy
         params = {k: versions[k] for k in keys}
         params.update(limits=dataclasses.asdict(self.limits), mimes=policy.accepted_mimes,

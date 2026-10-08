@@ -156,6 +156,7 @@ def chunk_state(db) -> dict[str, Any]:
 
     from app.processing.chunking import tokenizer
     from app.processing.chunking.chunker import ChunkingConfig, chunk_document
+    from app.processing.chunking import plain
     from app.processing.chunking.service import silver_kind
     from app.processing.normalization.text import canonicalize_text
     from app.utils.ids import chunk_id_from_hash
@@ -207,7 +208,7 @@ def chunk_state(db) -> dict[str, Any]:
     for r in rows:
         (doc_id, ordinal, chunk_id, start, end, path, chunk_text, chunk_hash, token_count, doc_text, reason) = r
         by_document.setdefault(doc_id, []).append(r)
-        if canonicalize_text(doc_text[start:end]) != chunk_text:
+        if canonicalize_text(plain.render(doc_text[start:end], silver_kind(reason))) != chunk_text:  # c2 invariant
             problems.append(f"offset {doc_id}/{ordinal}")
         if hashlib.sha256(chunk_text.encode("utf-8")).digest() != bytes(chunk_hash):
             problems.append(f"hash {chunk_id}")

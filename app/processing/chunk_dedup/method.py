@@ -1,4 +1,4 @@
-"""Frozen definition of the chunk near-dedup method ``chunk_minhash_lsh`` / ``oph-w3-b10r4-j70-v1``.
+"""Frozen definition of the chunk near-dedup method ``chunk_minhash_lsh`` / ``oph-w3-b10r4-j70-v2``.
 
 This is the design approved in docs/chunk_near_dedup_candidate_index_v1.md:
 
@@ -29,7 +29,7 @@ import struct
 from app.processing.chunk_dedup import facts
 
 ALGORITHM = "chunk_minhash_lsh"
-VERSION = "oph-w3-b10r4-j70-v1"
+VERSION = "oph-w3-b10r4-j70-v2"  # v2: fact guard fg-v2 (plain-text titles of c2 chunks)
 SHINGLE = 3
 BANDS, ROWS = 10, 4
 BINS = BANDS * ROWS

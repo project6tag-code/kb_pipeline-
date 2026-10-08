@@ -43,7 +43,7 @@ def _runtime_db(expect_database: str):
             conn.rollback()
         if name != expect_database:
             raise WrongDatabase(f"connected to database {name!r}, expected {expect_database!r}")
-        db.verify_runtime_identity()  # kb_pipeline_app, revision kbp_001d, UTC
+        db.verify_runtime_identity()  # kb_pipeline_app, revision kbp_001e, UTC
     except BaseException:
         db.dispose()
         raise

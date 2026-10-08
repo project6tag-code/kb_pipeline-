@@ -28,6 +28,9 @@ def _db():
 
 
 def cmd_plan(settings: GitHubSettings, args: argparse.Namespace) -> int:
+    from app.config import features
+
+    features.require_github("GitHub discovery planning")  # release guard: Common Crawl only
     from app.queue.job_queue import JobQueue
     from app.sources.github.discovery import plan_discovery
 
