@@ -59,7 +59,12 @@ try {
     Check 'bootstrap_public_tables.sql' (Psql @('-d', $Database, '-f', 'scripts\db\bootstrap_public_tables.sql'))
 
     Step 'Roles, schema kbp and grants'
-    Check 'provision_kbp_roles.sql' (Psql @('-d', $Database, '-v', "target_db=$Database", '-f', 'scripts\db\provision_kbp_roles.sql'))
+    # Provisioning is a once-only step: after the Gold V2 patch grants INSERT on public.datasets, its own self-check
+    # would refuse a second run. Schema kbp existing means it already ran, so a rerun of this script skips it.
+    $provisioned = (& $psql -X -tA -h $HostName -p $Port -U $AdminUser -d $Database -c "SELECT 1 FROM pg_namespace WHERE nspname = 'kbp'")
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot query the new database.' }
+    if ($provisioned) { Write-Host 'schema kbp already exists: provisioning was done earlier, skipped' }
+    else { Check 'provision_kbp_roles.sql' (Psql @('-d', $Database, '-v', "target_db=$Database", '-f', 'scripts\db\provision_kbp_roles.sql')) }
 
     Step 'Pipeline role passwords (pgpass.conf)'
     $pgpass = Join-Path $env:APPDATA 'postgresql\pgpass.conf'
@@ -79,6 +84,9 @@ try {
     Step 'Alembic: schema kbp'
     Check 'alembic upgrade head' (Py 'alembic' @('-x', "expect_database=$Database", 'upgrade', 'head'))
 
+    Step 'Embedding model id 2 (the runtime pins MODEL_ID = 2; see scripts\db\ensure_embedding_model_id.sql)'
+    Check 'ensure_embedding_model_id.sql' (Psql @('-d', $Database, '-v', "expected_database=$Database", '-f', 'scripts\db\ensure_embedding_model_id.sql'))
+
     Step 'Frozen registrations (migrator)'
     Check 'silver register-methods' (Py 'app.processing.silver.cli' @('register-methods', '--expect-database', $Database))
     Check 'chunking register-version' (Py 'app.processing.chunking.cli' @('register-version', '--expect-database', $Database))
@@ -88,7 +96,7 @@ try {
 
     Step 'Gold bridge rows (administrator), Gold V2 grants, bridge map'
     Check 'gold_bridge admin-bootstrap' (Py 'app.processing.gold_bridge.cli' @('admin-bootstrap', '--expect-database', $Database))
-    Check 'admin_gold_v2_patch.sql' (Psql @('-d', $Database, '-f', 'scripts\db\admin_gold_v2_patch.sql'))
+    Check 'admin_gold_v2_patch.sql' (Psql @('-d', $Database, '-v', "expected_database=$Database", '-f', 'scripts\db\admin_gold_v2_patch.sql'))
     Check 'gold_bridge map-bootstrap' (Py 'app.processing.gold_bridge.cli' @('map-bootstrap', '--expect-database', $Database))
 
     Step 'Promote embedding model 2 to active_gold'

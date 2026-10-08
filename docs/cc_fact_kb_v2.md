@@ -148,7 +148,7 @@ pg_dump -h localhost -U postgres -Fc -f backup\kb_pipeline_test_before_v2_reset.
 $env:KB_MIGRATION_DATABASE_URL = 'postgresql+psycopg://kb_pipeline_migrator@localhost:5432/kb_pipeline_test'
 .\.venv\Scripts\python.exe -m alembic -x expect_database=kb_pipeline_test upgrade head
 # 3. Gold V2 public patch
-psql -X -v ON_ERROR_STOP=1 -h localhost -U postgres -d kb_pipeline_test -f scripts/db/admin_gold_v2_patch.sql
+psql -X -v ON_ERROR_STOP=1 -v expected_database=kb_pipeline_test -h localhost -U postgres -d kb_pipeline_test -f scripts/db/admin_gold_v2_patch.sql
 # 4. content reset (destructive, needs the explicit confirmation)
 psql -X -v ON_ERROR_STOP=1 -v confirm=RESET_KB_PIPELINE_TEST -h localhost -U postgres -d kb_pipeline_test `
      -f scripts/db/admin_reset_kb_pipeline_test.sql

@@ -13,7 +13,7 @@ Set-Location $script:Root
 
 $required = @('pyproject.toml', 'alembic.ini', 'requirements-embeddings.txt', '.env.example', '.gitignore',
     'README_PRODUCTION.md', 'migrations/env.py', 'app/pipeline/cli.py', 'scripts/db/provision_kbp_roles.sql',
-    'scripts/db/admin_gold_v2_patch.sql', 'scripts/db/bootstrap_public_tables.sql', 'scripts/production/init_database.ps1',
+    'scripts/db/admin_gold_v2_patch.sql', 'scripts/db/bootstrap_public_tables.sql', 'scripts/db/ensure_embedding_model_id.sql', 'scripts/production/init_database.ps1',
     'app/config/target.py', 'app/config/features.py', 'scripts/db/admin_reset_kb_pipeline_test.sql',
     'app/sources/commoncrawl/reference_domains_v1.json', 'app/processing/classification/taxonomy_v1.json') +
     (Get-ChildItem migrations/versions -Filter 'kbp_*.py' | ForEach-Object { "migrations/versions/$($_.Name)" })
@@ -43,7 +43,23 @@ Report 'Migration safety checker' ($code -eq 0) "(exit $code)"
 
 $modules = Get-ChildItem tests/unit -Filter 'test_*.py' | Where-Object { $_.Name -notlike 'test_gh_*' } |
     ForEach-Object { 'tests.unit.' + $_.BaseName }
-$code = Invoke-Pipeline 'unittest' $modules
+$previousExpectedDatabase = $env:KB_EXPECTED_DATABASE
+
+try {
+    # Unit tests are written against the isolated test database name.
+    $env:KB_EXPECTED_DATABASE = 'kb_pipeline_test'
+
+    $code = Invoke-Pipeline 'unittest' $modules
+}
+finally {
+    if ($null -eq $previousExpectedDatabase) {
+        Remove-Item Env:\KB_EXPECTED_DATABASE -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:KB_EXPECTED_DATABASE = $previousExpectedDatabase
+    }
+}
+
 Report 'Unit tests (GitHub tests excluded)' ($code -eq 0) "(exit $code)"
 
 if ($failed) { Write-Host "`n$failed check(s) failed."; exit 1 }

@@ -36,6 +36,7 @@ Then put `KB_EXPECTED_DATABASE=kb_prod` and the two database URLs into `.env`. T
 | 2 | create `public.dataset_sources`, `datasets`, `metadata`, `kb` in the validated V2 layout (`metadata.crawled_at`, `kb.source_id` included), then verify the exact layout | `scripts\db\bootstrap_public_tables.sql` |
 | 3 | roles, schema `kbp`, grants | `scripts\db\provision_kbp_roles.sql -v target_db=<db>` |
 | 4 | `kbp` schema to revision `kbp_001e` | `alembic -x expect_database=<db> upgrade head` |
+| 4b | make the frozen MPNet model register as **id 2** (the runtime pins `MODEL_ID = 2`; a clean database would give id 1): consumes one identity value, or removes a previously registered unused id 1 and realigns the empty identity | `scripts\db\ensure_embedding_model_id.sql` |
 | 5 | frozen registrations: Silver methods, chunking version, dedup method, MPNet model (downloads the model once) | `silver.cli`, `chunking.cli`, `chunk_dedup.cli`, `embedding.cli` |
 | 6 | Gold bridge rows, Gold V2 grants, bridge map | `gold_bridge.cli admin-bootstrap`, `scripts\db\admin_gold_v2_patch.sql`, `map-bootstrap` |
 | 7 | model 2 to `active_gold` | `gold.cli promote-model` |

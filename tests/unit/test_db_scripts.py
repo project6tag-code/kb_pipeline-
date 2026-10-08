@@ -702,7 +702,6 @@ class GoldV2AdminScriptTests(unittest.TestCase):
 
     def test_patch_is_targeted_additive_and_least_privilege(self) -> None:
         code = re.sub(r"'[^']*'", "''", re.sub(r"--[^\n]*", "", sql_only(self.PATCH))).lower()
-        self.assertIn("current_database() <> 'kb_pipeline_test'", self.PATCH)
         self.assertIn("version_num = 'kbp_001e'", self.PATCH)
         self.assertIn("alter table public.metadata add column if not exists crawled_at timestamptz", code)
         self.assertIn("alter table public.kb add column if not exists source_id uuid;", code)
@@ -777,3 +776,109 @@ class BootstrapPublicTablesTests(unittest.TestCase):
 
     def test_no_secrets(self) -> None:
         self.assertNotRegex(self.SQL.lower(), r"password\s*=|postgresql://[^@\s]*:[^@\s]+@")
+
+
+class ConfigurableGuardTests(unittest.TestCase):
+    """The Gold V2 patch guard takes the database from -v expected_database (no hard-coded name)."""
+
+    PATCH = read("admin_gold_v2_patch.sql")
+    INIT = (ROOT / "scripts" / "production" / "init_database.ps1").read_text(encoding="utf-8")
+
+    def test_guard_uses_the_variable_and_has_no_fixed_database_name(self) -> None:
+        code = sql_only(self.PATCH)
+        self.assertNotIn("kb_pipeline_test", re.sub(r"--[^\n]*", "", code))
+        for token in ("\if :{?expected_database}", "\quit 3", ":'expected_database'",
+                      "current_setting('kbp_patch.expected_database')", "current_database() <> expected"):
+            with self.subTest(token=token):
+                self.assertIn(token, self.PATCH)
+
+    def test_protected_databases_and_names_are_always_refused(self) -> None:
+        guard = self.PATCH.split("DO $guard$")[1].split("$guard$;")[0]
+        protected = "('data_collection_pipeline', 'postgres', 'template0', 'template1')"
+        self.assertEqual(guard.count(protected), 2)  # the expected name AND the connected database
+        self.assertIn("expected !~ '^[a-z][a-z0-9_]{0,62}$'", guard)
+
+    def test_role_superuser_and_revision_checks_are_kept(self) -> None:
+        for token in ("version_num = 'kbp_001e'", "current_user IN ('kb_pipeline_app', 'kb_pipeline_migrator')",
+                      "has_table_privilege('kb_pipeline_app', 'public.datasets', 'UPDATE')",
+                      "ADD COLUMN IF NOT EXISTS crawled_at", "ADD COLUMN IF NOT EXISTS source_id"):
+            with self.subTest(token=token):
+                self.assertIn(token, self.PATCH)
+
+    def test_initializer_passes_the_variable_and_the_reset_script_stays_test_only(self) -> None:
+        self.assertIn(r"""'-v', "expected_database=$Database", '-f', 'scripts\db\admin_gold_v2_patch.sql'""", self.INIT)
+        reset = read("admin_reset_kb_pipeline_test.sql")
+        self.assertIn("current_database() <> 'kb_pipeline_test'", reset)  # unchanged: test database only
+
+    def test_initializer_is_rerunnable_provisioning_is_skipped_once_kbp_exists(self) -> None:
+        self.assertIn("nspname = 'kbp'", self.INIT)
+        self.assertIn("provisioning was done earlier, skipped", self.INIT)
+        # the reason: provision_kbp_roles.sql refuses a run after datasets INSERT was granted by the Gold V2 patch
+        self.assertIn("INSERT on public.datasets must not be granted", read("provision_kbp_roles.sql"))
+
+    def test_no_init_path_script_pins_the_test_database(self) -> None:
+        for name in ("bootstrap_public_tables.sql", "provision_kbp_roles.sql", "admin_gold_v2_patch.sql"):
+            with self.subTest(script=name):
+                self.assertNotRegex(re.sub(r"--[^\n]*", "", sql_only(read(name))), r"<>\s*'kb_pipeline_test'")
+
+
+class EmbeddingModelIdBootstrapTests(unittest.TestCase):
+    """scripts/db/ensure_embedding_model_id.sql: a clean database must register the frozen model as id 2."""
+
+    SQL = read("ensure_embedding_model_id.sql")
+    INIT = (ROOT / "scripts" / "production" / "init_database.ps1").read_text(encoding="utf-8")
+
+    def test_frozen_id_equals_the_runtime_constants(self) -> None:
+        from app.pipeline import cli
+        from app.processing.gold import service
+
+        frozen = int(re.search(r"frozen_id constant smallint := (\d+);", self.SQL).group(1))
+        self.assertEqual(frozen, cli.MODEL_ID)
+        self.assertEqual(frozen, service.MODEL_ID)
+        self.assertEqual(frozen, 2)
+
+    def test_database_guard_is_the_configured_one(self) -> None:
+        for token in ("\if :{?expected_database}", "\quit 3", ":'expected_database'",
+                      "current_database() <> expected", "current_user = 'kb_pipeline_app'",
+                      "version_num = 'kbp_001e'"):
+            with self.subTest(token=token):
+                self.assertIn(token, self.SQL)
+        guard = self.SQL.split("DO $ensure$")[1].split("$ensure$;")[0]
+        self.assertEqual(guard.count("('data_collection_pipeline', 'postgres', 'template0', 'template1')"), 2)
+        self.assertNotIn("kb_pipeline_test", re.sub(r"--[^\n]*", "", sql_only(self.SQL)))
+
+    def test_it_never_invents_or_rewrites_a_model(self) -> None:
+        code = re.sub(r"'[^']*'", "''", re.sub(r"--[^\n]*", "", sql_only(self.SQL))).lower()
+        self.assertNotRegex(code, r"\binsert\b|\bupdate\b|\btruncate\b|\bdrop\b|\bgrant\b|\bsetval\b")
+        self.assertEqual(re.findall(r"delete from (\S+)", code), ["kbp.embedding_models"])
+        # the only DELETE is the unused candidate: id 1, status candidate, no embeddings, vectors or queue rows
+        for token in ("only_id = frozen_id - 1", "'candidate'", "kbp.chunk_embeddings", "kbp.chunk_embedding_vectors",
+                      "kbp.embedding_queue"):
+            with self.subTest(token=token):
+                self.assertIn(token, self.SQL)
+        with_strings = re.sub(r"--[^\n]*", "", sql_only(self.SQL)).lower()  # the ALTER lives inside format('...')
+        self.assertEqual(re.findall(r"alter table (\S+) alter column (\S+) restart with", with_strings),
+                         [("kbp.embedding_models", "embedding_model_id")])
+        self.assertEqual(with_strings.count("alter table"), 1)
+        self.assertIn("is not empty; refusing", self.SQL)
+
+    def test_initializer_runs_it_between_alembic_and_the_model_registration(self) -> None:
+        order = [self.INIT.index(token) for token in
+                 ("'alembic'", "ensure_embedding_model_id.sql", "'embedding.cli'" if "'embedding.cli'" in self.INIT
+                  else "app.processing.embedding.cli' @('register-model'")]
+        self.assertEqual(order, sorted(order))
+        self.assertIn("'-v', \"expected_database=$Database\", '-f', 'scripts\db\ensure_embedding_model_id.sql'"
+                      .replace("\db", chr(92) + "db"), self.INIT.replace("\db", chr(92) + "db"))
+        register = self.INIT.index("register-model")
+        self.assertLess(self.INIT.index("ensure_embedding_model_id.sql"), register)
+        self.assertLess(register, self.INIT.index("promote-model"))
+
+    def test_other_runtime_lookups_do_not_depend_on_an_id(self) -> None:
+        # chunking version and dedup method are resolved by name, the bridge by deterministic UUID: no id is pinned.
+        import app.pipeline.cli as pipeline_cli
+        import app.processing.gold.service as gold_service
+
+        for module in (pipeline_cli, gold_service):
+            ids = {name: value for name, value in vars(module).items()
+                   if re.fullmatch(r"[A-Z_]*(METHOD|VERSION|CHUNKING)[A-Z_]*_ID", name)}
+            self.assertEqual(ids, {}, module.__name__)
